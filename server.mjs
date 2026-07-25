@@ -15,7 +15,12 @@ import {
 
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const apiKey = process.env.BRIDGE_API_KEY ?? "";
-const publicBaseUrl = (process.env.PUBLIC_BASE_URL ?? "https://YOUR-DOMAIN.example.com").replace(/\/+$/, "");
+const publicBaseUrl = (
+  process.env.PUBLIC_BASE_URL
+  ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "https://YOUR-DOMAIN.example.com")
+).replace(/\/+$/, "");
 const commandTtlMs = Number.parseInt(process.env.COMMAND_TTL_MS ?? "600000", 10);
 const pairingTtlMs = Number.parseInt(process.env.PAIRING_TTL_MS ?? "600000", 10);
 
