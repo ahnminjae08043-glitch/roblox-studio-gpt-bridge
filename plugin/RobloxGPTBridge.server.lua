@@ -5,7 +5,7 @@ local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local Selection = game:GetService("Selection")
 local LogService = game:GetService("LogService")
 
-local DEFAULT_URL = "http://127.0.0.1:8787"
+local DEFAULT_URL = "https://roblox-studio-gpt-bridge.vercel.app"
 local POLL_SECONDS = 1.0
 local MAX_TREE_CHILDREN = 300
 local ALLOWED_CLASSES = {

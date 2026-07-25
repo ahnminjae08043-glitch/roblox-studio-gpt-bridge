@@ -1,5 +1,10 @@
-const redisUrl = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/+$/, "");
-const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+const redisUrl = (
+  process.env.UPSTASH_REDIS_REST_URL ??
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_URL
+)?.replace(/\/+$/, "");
+const redisToken =
+  process.env.UPSTASH_REDIS_REST_TOKEN ??
+  process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN;
 export const usesRedis = Boolean(redisUrl && redisToken);
 
 const memoryCommands = new Map();
