@@ -1,5 +1,17 @@
 import http from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  claimCommand,
+  cleanupMemory,
+  getCommand,
+  getDevice,
+  memoryStats,
+  saveCommand,
+  saveDevice,
+  savePairing,
+  takePairing,
+  usesRedis
+} from "./store.mjs";
 
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const apiKey = process.env.BRIDGE_API_KEY ?? "";
@@ -53,10 +65,6 @@ const actionAliases = new Map([
   ["read_output_logs", "get_output_logs"]
 ]);
 
-const commands = new Map();
-const devices = new Map();
-const pairingCodes = new Map();
-
 function json(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -102,37 +110,32 @@ function deviceCredentials(req) {
   };
 }
 
-function isPluginAuthorized(req, expectedDeviceId) {
+async function isPluginAuthorized(req, expectedDeviceId) {
   const credentials = deviceCredentials(req);
-  const device = devices.get(credentials.id);
+  const device = await getDevice(credentials.id);
   if (device && (!expectedDeviceId || credentials.id === expectedDeviceId)) {
     return constantTimeEqual(credentials.token, device.token);
   }
   return isActionAuthorized(req) && (!expectedDeviceId || expectedDeviceId === "legacy");
 }
 
-function createPairing() {
-  let code;
-  do {
-    code = String(Math.floor(100000 + Math.random() * 900000));
-  } while (pairingCodes.has(code));
+async function createPairing() {
+  const code = String(Math.floor(100000 + Math.random() * 900000));
   const device = {
     id: randomUUID(),
     token: randomBytes(32).toString("base64url"),
     createdAt: new Date().toISOString()
   };
-  devices.set(device.id, device);
-  pairingCodes.set(code, {
+  await saveDevice(device);
+  await savePairing(code, {
     deviceId: device.id,
     expiresMs: Date.now() + pairingTtlMs
-  });
+  }, Math.floor(pairingTtlMs / 1000));
   return { code, device };
 }
 
 function cleanupPairings() {
-  for (const [code, pairing] of pairingCodes) {
-    if (pairing.expiresMs <= Date.now()) pairingCodes.delete(code);
-  }
+  cleanupMemory(Date.now(), commandTtlMs);
 }
 
 function publicCommand(command) {
@@ -394,18 +397,15 @@ function openApiSchema() {
 }
 
 function cleanupExpired() {
-  const now = Date.now();
-  for (const [id, command] of commands) {
-    if (now - command.createdMs > commandTtlMs) commands.delete(id);
-  }
+  cleanupMemory(Date.now(), commandTtlMs);
 }
 
-const server = http.createServer(async (req, res) => {
+export default async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
 
     if (req.method === "GET" && url.pathname === "/health") {
-      return json(res, 200, { ok: true, queued: [...commands.values()].filter((c) => c.status === "queued").length });
+      return json(res, 200, { ok: true, storage: usesRedis ? "redis" : "memory", ...memoryStats() });
     }
 
     if (req.method === "GET" && url.pathname === "/openapi.json") {
@@ -414,7 +414,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/v1/plugin/pairings") {
       cleanupPairings();
-      const { code, device } = createPairing();
+      const { code, device } = await createPairing();
       return json(res, 201, {
         pairingCode: code,
         expiresInSeconds: Math.floor(pairingTtlMs / 1000),
@@ -428,9 +428,8 @@ const server = http.createServer(async (req, res) => {
       cleanupPairings();
       const body = await readJson(req);
       const code = String(body.pairingCode ?? "").replace(/\D/g, "");
-      const pairing = pairingCodes.get(code);
+      const pairing = await takePairing(code);
       if (!pairing) return json(res, 404, { error: "Pairing code is invalid or expired." });
-      pairingCodes.delete(code);
       return json(res, 200, { deviceId: pairing.deviceId });
     }
 
@@ -444,7 +443,7 @@ const server = http.createServer(async (req, res) => {
       const payload = body.command ?? body.input ?? body;
       const action = actionAliases.get(payload.action) ?? payload.action;
       const deviceId = String(payload.deviceId ?? "legacy");
-      if (deviceId !== "legacy" && !devices.has(deviceId)) {
+      if (deviceId !== "legacy" && !(await getDevice(deviceId))) {
         return json(res, 404, { error: "Unknown deviceId. Pair this Studio installation first." });
       }
       let args = payload.args ?? {};
@@ -467,27 +466,28 @@ const server = http.createServer(async (req, res) => {
         createdAt: new Date().toISOString(),
         createdMs: Date.now()
       };
-      commands.set(command.id, command);
+      await saveCommand(command, Math.floor(commandTtlMs / 1000));
       return json(res, 202, publicCommand(command));
     }
 
     const statusMatch = url.pathname.match(/^\/v1\/commands\/([0-9a-f-]+)$/i);
     if (req.method === "GET" && statusMatch) {
-      const command = commands.get(statusMatch[1]);
+      const command = await getCommand(statusMatch[1]);
       return command ? json(res, 200, publicCommand(command)) : json(res, 404, { error: "Command not found." });
     }
 
     if (req.method === "GET" && url.pathname === "/v1/plugin/commands/next") {
       const credentials = deviceCredentials(req);
       const deviceId = credentials.id || "legacy";
-      if (!isPluginAuthorized(req, deviceId)) return json(res, 401, { error: "Unauthorized" });
+      if (!(await isPluginAuthorized(req, deviceId))) return json(res, 401, { error: "Unauthorized" });
       cleanupExpired();
-      const command = [...commands.values()].find(
-        (item) => item.status === "queued" && item.deviceId === deviceId
-      );
+      const command = await claimCommand(deviceId, Math.floor(commandTtlMs / 1000));
       if (!command) return json(res, 200, { command: null });
-      command.status = "claimed";
-      command.claimedAt = new Date().toISOString();
+      if (command.status === "queued") {
+        command.status = "claimed";
+        command.claimedAt = new Date().toISOString();
+        await saveCommand(command, Math.floor(commandTtlMs / 1000));
+      }
       return json(res, 200, {
         command: {
           id: command.id,
@@ -499,9 +499,9 @@ const server = http.createServer(async (req, res) => {
 
     const resultMatch = url.pathname.match(/^\/v1\/plugin\/commands\/([0-9a-f-]+)\/result$/i);
     if (req.method === "POST" && resultMatch) {
-      const command = commands.get(resultMatch[1]);
+      const command = await getCommand(resultMatch[1]);
       if (!command) return json(res, 404, { error: "Command not found." });
-      if (!isPluginAuthorized(req, command.deviceId)) {
+      if (!(await isPluginAuthorized(req, command.deviceId))) {
         return json(res, 401, { error: "Unauthorized" });
       }
       const body = await readJson(req);
@@ -509,6 +509,7 @@ const server = http.createServer(async (req, res) => {
       command.result = body.ok ? (body.result ?? {}) : null;
       command.error = body.ok ? null : String(body.error ?? "Unknown plugin error");
       command.completedAt = new Date().toISOString();
+      await saveCommand(command, Math.floor(commandTtlMs / 1000));
       return json(res, 200, publicCommand(command));
     }
 
@@ -517,9 +518,12 @@ const server = http.createServer(async (req, res) => {
     const status = error instanceof SyntaxError ? 400 : 500;
     return json(res, status, { error: error.message });
   }
-});
+}
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Roblox GPT Bridge listening on http://127.0.0.1:${port}`);
-  console.log(`OpenAPI schema: http://127.0.0.1:${port}/openapi.json`);
-});
+if (!process.env.VERCEL) {
+  const server = http.createServer(handler);
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`Roblox GPT Bridge listening on http://127.0.0.1:${port}`);
+    console.log(`OpenAPI schema: http://127.0.0.1:${port}/openapi.json`);
+  });
+}
