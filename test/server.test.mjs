@@ -153,7 +153,11 @@ test("pairs a Studio device and isolates its command queue", async () => {
   });
   assert.equal(pairingResponse.status, 201);
   const pairing = await pairingResponse.json();
-  assert.match(pairing.pairingCode, /^\d{6}$/);
+  assert.match(pairing.pairingCode, /^[A-Za-z0-9_!-]{12}$/);
+  assert.match(pairing.pairingCode, /[A-Z]/);
+  assert.match(pairing.pairingCode, /[a-z]/);
+  assert.match(pairing.pairingCode, /[0-9]/);
+  assert.match(pairing.pairingCode, /[-_!]/);
 
   const resolveResponse = await fetch(`http://127.0.0.1:${port}/v1/pairings/resolve`, {
     method: "POST",

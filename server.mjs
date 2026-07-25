@@ -1,5 +1,5 @@
 import http from "node:http";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   claimCommand,
   cleanupMemory,
@@ -136,7 +136,21 @@ async function isPluginAuthorized(req, expectedDeviceId) {
 }
 
 async function createPairing() {
-  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const characters = [
+    "ABCDEFGHJKLMNPQRSTUVWXYZ"[randomInt(24)],
+    "abcdefghijkmnopqrstuvwxyz"[randomInt(25)],
+    "23456789"[randomInt(8)],
+    "-_!"[randomInt(3)]
+  ];
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_!";
+  while (characters.length < 12) {
+    characters.push(alphabet[randomInt(alphabet.length)]);
+  }
+  for (let index = characters.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomInt(index + 1);
+    [characters[index], characters[swapIndex]] = [characters[swapIndex], characters[index]];
+  }
+  const code = characters.join("");
   const device = {
     id: randomUUID(),
     token: randomBytes(32).toString("base64url"),
@@ -193,7 +207,10 @@ function openApiSchema() {
                   properties: {
                     pairingCode: {
                       type: "string",
-                      pattern: "^[0-9]{6}$"
+                      minLength: 12,
+                      maxLength: 12,
+                      pattern: "^[A-Za-z0-9_!\\-]{12}$",
+                      description: "Case-sensitive 12-character pairing code shown in the plugin."
                     }
                   }
                 }
@@ -457,7 +474,7 @@ export default async function handler(req, res) {
       if (!isActionAuthorized(req)) return json(res, 401, { error: "Unauthorized" });
       cleanupPairings();
       const body = await readJson(req);
-      const code = String(body.pairingCode ?? "").replace(/\D/g, "");
+      const code = String(body.pairingCode ?? "").trim();
       const pairing = await takePairing(code);
       if (!pairing) return json(res, 404, { error: "Pairing code is invalid or expired." });
       return json(res, 200, { deviceId: pairing.deviceId });
