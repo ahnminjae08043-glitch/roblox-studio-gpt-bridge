@@ -124,7 +124,11 @@ local function makeBox(value, y, placeholder)
 end
 
 makeLabel("Bridge URL", 10)
-local urlBox = makeBox(plugin:GetSetting("BridgeUrl") or DEFAULT_URL, 34, DEFAULT_URL)
+local savedBridgeUrl = plugin:GetSetting("BridgeUrl") or DEFAULT_URL
+if string.find(savedBridgeUrl, "127.0.0.1", 1, true) or string.find(savedBridgeUrl, "localhost", 1, true) then
+	savedBridgeUrl = DEFAULT_URL
+end
+local urlBox = makeBox(savedBridgeUrl, 34, DEFAULT_URL)
 makeLabel("Shared key", 72)
 local keyBox = makeBox(plugin:GetSetting("BridgeKey") or "", 96, "Same value as BRIDGE_API_KEY")
 keyBox.TextEditable = true
@@ -151,8 +155,8 @@ pairButton.TextColor3 = Color3.new(1, 1, 1)
 pairButton.Text = "Create Pairing Code"
 pairButton.Parent = widget
 
-local pairingLabel = makeLabel("Not paired", 228, 34)
-pairingLabel.TextWrapped = true
+local pairingLabel = makeBox("", 228, "Pairing code appears here")
+pairingLabel.TextEditable = true
 pairingLabel.TextColor3 = Color3.fromRGB(160, 175, 240)
 
 local statusLabel = makeLabel("Disconnected", 266, 44)
@@ -214,7 +218,7 @@ local pendingDecision = nil
 local outputLogs = {}
 local deviceId = plugin:GetSetting("BridgeDeviceId") or ""
 local deviceToken = plugin:GetSetting("BridgeDeviceToken") or ""
-if deviceId ~= "" then pairingLabel.Text = "Paired device: " .. string.sub(deviceId, 1, 8) end
+if deviceId ~= "" then pairingLabel.Text = "Paired: " .. string.sub(deviceId, 1, 8) end
 
 LogService.MessageOut:Connect(function(message, messageType)
 	table.insert(outputLogs, {
@@ -268,7 +272,7 @@ local function createPairingCode()
 	deviceToken = result.deviceToken
 	plugin:SetSetting("BridgeDeviceId", deviceId)
 	plugin:SetSetting("BridgeDeviceToken", deviceToken)
-	pairingLabel.Text = "Pairing code: " .. result.pairingCode .. " (10 min)"
+	pairingLabel.Text = result.pairingCode
 	pairButton.Text = "Refresh Pairing Code"
 	return true
 end
