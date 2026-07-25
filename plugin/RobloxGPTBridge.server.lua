@@ -129,12 +129,9 @@ if string.find(savedBridgeUrl, "127.0.0.1", 1, true) or string.find(savedBridgeU
 	savedBridgeUrl = DEFAULT_URL
 end
 local urlBox = makeBox(savedBridgeUrl, 34, DEFAULT_URL)
-makeLabel("Shared key", 72)
-local keyBox = makeBox(plugin:GetSetting("BridgeKey") or "", 96, "Same value as BRIDGE_API_KEY")
-keyBox.TextEditable = true
 
 local connectButton = Instance.new("TextButton")
-connectButton.Position = UDim2.fromOffset(12, 142)
+connectButton.Position = UDim2.fromOffset(12, 82)
 connectButton.Size = UDim2.new(1, -24, 0, 36)
 connectButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
 connectButton.BorderSizePixel = 0
@@ -145,7 +142,7 @@ connectButton.Text = "Connect"
 connectButton.Parent = widget
 
 local pairButton = Instance.new("TextButton")
-pairButton.Position = UDim2.fromOffset(12, 188)
+pairButton.Position = UDim2.fromOffset(12, 128)
 pairButton.Size = UDim2.new(1, -24, 0, 34)
 pairButton.BackgroundColor3 = Color3.fromRGB(80, 95, 180)
 pairButton.BorderSizePixel = 0
@@ -155,20 +152,20 @@ pairButton.TextColor3 = Color3.new(1, 1, 1)
 pairButton.Text = "Create Pairing Code"
 pairButton.Parent = widget
 
-local pairingLabel = makeBox("", 228, "Pairing code appears here")
+local pairingLabel = makeBox("", 174, "Pairing code appears here")
 pairingLabel.TextEditable = false
 pairingLabel.TextColor3 = Color3.fromRGB(160, 175, 240)
 
-local statusLabel = makeLabel("Disconnected", 266, 44)
+local statusLabel = makeLabel("Disconnected", 214, 44)
 statusLabel.TextWrapped = true
 statusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 
-local pendingLabel = makeLabel("No command awaiting approval", 312, 62)
+local pendingLabel = makeLabel("No command awaiting approval", 260, 62)
 pendingLabel.TextWrapped = true
 pendingLabel.TextColor3 = Color3.fromRGB(215, 190, 120)
 
 local approveButton = Instance.new("TextButton")
-approveButton.Position = UDim2.new(0, 12, 0, 380)
+approveButton.Position = UDim2.new(0, 12, 0, 328)
 approveButton.Size = UDim2.new(0.5, -18, 0, 36)
 approveButton.BackgroundColor3 = Color3.fromRGB(35, 145, 75)
 approveButton.BorderSizePixel = 0
@@ -180,7 +177,7 @@ approveButton.Visible = false
 approveButton.Parent = widget
 
 local rejectButton = Instance.new("TextButton")
-rejectButton.Position = UDim2.new(0.5, 6, 0, 380)
+rejectButton.Position = UDim2.new(0.5, 6, 0, 328)
 rejectButton.Size = UDim2.new(0.5, -18, 0, 36)
 rejectButton.BackgroundColor3 = Color3.fromRGB(170, 70, 70)
 rejectButton.BorderSizePixel = 0
@@ -193,7 +190,7 @@ rejectButton.Parent = widget
 
 local alwaysAllowChanges = plugin:GetSetting("AlwaysAllowChanges") == true
 local alwaysAllowButton = Instance.new("TextButton")
-alwaysAllowButton.Position = UDim2.new(0, 12, 0, 426)
+alwaysAllowButton.Position = UDim2.new(0, 12, 0, 374)
 alwaysAllowButton.Size = UDim2.new(1, -24, 0, 36)
 alwaysAllowButton.BorderSizePixel = 0
 alwaysAllowButton.Font = Enum.Font.SourceSansSemibold
@@ -209,7 +206,7 @@ local function refreshAlwaysAllowButton()
 end
 refreshAlwaysAllowButton()
 
-local safetyLabel = makeLabel("Read-only commands run automatically. Always Allow automatically approves every change.", 470, 58)
+local safetyLabel = makeLabel("Read-only commands run automatically. Always Allow automatically approves every change.", 418, 58)
 safetyLabel.TextWrapped = true
 safetyLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 
@@ -238,8 +235,6 @@ local function request(method, path, body)
 	if deviceId ~= "" and deviceToken ~= "" then
 		headers["x-device-id"] = deviceId
 		headers["x-device-token"] = deviceToken
-	else
-		headers["x-bridge-key"] = keyBox.Text
 	end
 	local response = HttpService:RequestAsync({
 		Url = normalizeBaseUrl(urlBox.Text) .. path,
@@ -977,7 +972,6 @@ connectButton.Activated:Connect(function()
 	running = not running
 	if running then
 		plugin:SetSetting("BridgeUrl", urlBox.Text)
-		plugin:SetSetting("BridgeKey", keyBox.Text)
 		if deviceId == "" or deviceToken == "" then
 			statusLabel.Text = "Creating pairing code..."
 			if not createPairingCode() then
