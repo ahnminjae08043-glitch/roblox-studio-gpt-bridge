@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: roblox-gpt-bridge
+    runtime: docker
+    healthCheckPath: /health
+    envVars:
+      - key: BRIDGE_API_KEY
+        generateValue: true
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: COMMAND_TTL_MS
+        value: "600000"
+      - key: PAIRING_TTL_MS
+        value: "600000"

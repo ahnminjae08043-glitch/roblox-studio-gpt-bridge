@@ -1,0 +1,15 @@
+{
+  "name": "roblox-gpt-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A small HTTPS bridge between GPT Actions and a Roblox Studio plugin.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

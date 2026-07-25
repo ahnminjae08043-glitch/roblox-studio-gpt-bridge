@@ -1,0 +1,525 @@
+import http from "node:http";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+
+const port = Number.parseInt(process.env.PORT ?? "8787", 10);
+const apiKey = process.env.BRIDGE_API_KEY ?? "";
+const publicBaseUrl = (process.env.PUBLIC_BASE_URL ?? "https://YOUR-DOMAIN.example.com").replace(/\/+$/, "");
+const commandTtlMs = Number.parseInt(process.env.COMMAND_TTL_MS ?? "600000", 10);
+const pairingTtlMs = Number.parseInt(process.env.PAIRING_TTL_MS ?? "600000", 10);
+
+if (!apiKey || apiKey.length < 16) {
+  console.error("BRIDGE_API_KEY must be set to a random value of at least 16 characters.");
+  process.exit(1);
+}
+
+const allowedActions = new Set([
+  "get_tree",
+  "search_instances",
+  "get_properties",
+  "get_selection",
+  "search_code",
+  "get_output_logs",
+  "create_instance",
+  "duplicate_instance",
+  "move_instance",
+  "rename_instance",
+  "batch_create",
+  "set_properties",
+  "set_attributes",
+  "set_script_source",
+  "patch_script",
+  "create_gui",
+  "create_weld",
+  "create_constraint",
+  "set_selection",
+  "set_model_pivot",
+  "set_tags",
+  "execute_plan",
+  "terrain_fill_block",
+  "terrain_fill_ball",
+  "terrain_clear_region",
+  "set_studio_camera",
+  "delete_instance"
+]);
+
+const actionAliases = new Map([
+  ["inspect_workspace", "get_tree"],
+  ["inspect_tree", "get_tree"],
+  ["list_tree", "get_tree"],
+  ["list_instances", "get_tree"],
+  ["inspect_selection", "get_selection"],
+  ["read_properties", "get_properties"],
+  ["inspect_properties", "get_properties"],
+  ["read_output_logs", "get_output_logs"]
+]);
+
+const commands = new Map();
+const devices = new Map();
+const pairingCodes = new Map();
+
+function json(res, status, body) {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(payload),
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff"
+  });
+  res.end(payload);
+}
+
+async function readJson(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 256 * 1024) {
+      throw new Error("Request body is too large.");
+    }
+    chunks.push(chunk);
+  }
+  if (chunks.length === 0) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function constantTimeEqual(left, right) {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function isActionAuthorized(req) {
+  const authorization = req.headers.authorization ?? "";
+  const bearer = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  const pluginKey = req.headers["x-bridge-key"] ?? "";
+  return constantTimeEqual(String(bearer || pluginKey), apiKey);
+}
+
+function deviceCredentials(req) {
+  return {
+    id: String(req.headers["x-device-id"] ?? ""),
+    token: String(req.headers["x-device-token"] ?? "")
+  };
+}
+
+function isPluginAuthorized(req, expectedDeviceId) {
+  const credentials = deviceCredentials(req);
+  const device = devices.get(credentials.id);
+  if (device && (!expectedDeviceId || credentials.id === expectedDeviceId)) {
+    return constantTimeEqual(credentials.token, device.token);
+  }
+  return isActionAuthorized(req) && (!expectedDeviceId || expectedDeviceId === "legacy");
+}
+
+function createPairing() {
+  let code;
+  do {
+    code = String(Math.floor(100000 + Math.random() * 900000));
+  } while (pairingCodes.has(code));
+  const device = {
+    id: randomUUID(),
+    token: randomBytes(32).toString("base64url"),
+    createdAt: new Date().toISOString()
+  };
+  devices.set(device.id, device);
+  pairingCodes.set(code, {
+    deviceId: device.id,
+    expiresMs: Date.now() + pairingTtlMs
+  });
+  return { code, device };
+}
+
+function cleanupPairings() {
+  for (const [code, pairing] of pairingCodes) {
+    if (pairing.expiresMs <= Date.now()) pairingCodes.delete(code);
+  }
+}
+
+function publicCommand(command) {
+  return {
+    id: command.id,
+    deviceId: command.deviceId,
+    action: command.action,
+    status: command.status,
+    createdAt: command.createdAt,
+    claimedAt: command.claimedAt ?? null,
+    completedAt: command.completedAt ?? null,
+    result: command.result ?? null,
+    error: command.error ?? null
+  };
+}
+
+function openApiSchema() {
+  return {
+    openapi: "3.1.0",
+    info: {
+      title: "Roblox Studio Bridge",
+      version: "0.1.0",
+      description: "Queue safe editing commands for a connected Roblox Studio plugin."
+    },
+    servers: [{ url: publicBaseUrl }],
+    paths: {
+      "/v1/pairings/resolve": {
+        post: {
+          operationId: "pairRobloxStudio",
+          summary: "Resolve a six-digit Studio pairing code",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["pairingCode"],
+                  properties: {
+                    pairingCode: {
+                      type: "string",
+                      pattern: "^[0-9]{6}$"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            "200": {
+              description: "Paired Studio device",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: { deviceId: { type: "string" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/v1/commands": {
+        post: {
+          operationId: "sendRobloxStudioCommand",
+          summary: "Send an editing or inspection command to Roblox Studio",
+          description: "Inspect hierarchy, selection, properties, code, and Output logs; create and edit instances or direct GUI trees; patch scripts; transform models; manage tags; create welds and constraints. The user approves mutations in Studio. After sending, poll with getRobloxStudioCommandStatus.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["deviceId", "action", "args"],
+                  properties: {
+                    deviceId: {
+                      type: "string",
+                      description: "Studio device ID returned by pairRobloxStudio."
+                    },
+                    action: {
+                      type: "string",
+                      enum: [...allowedActions]
+                    },
+                    args: {
+                      type: "object",
+                      description: "Arguments for the selected action.",
+                      additionalProperties: true,
+                      properties: {
+                        path: {
+                          type: "string",
+                          description: "Target instance path, for example Workspace/MyPart or StarterGui/MainGui."
+                        },
+                        rootPath: {
+                          type: "string",
+                          description: "Root path for search operations."
+                        },
+                        parentPath: {
+                          type: "string",
+                          description: "Parent path for a new or moved instance."
+                        },
+                        newParentPath: { type: "string" },
+                        className: { type: "string" },
+                        name: { type: "string" },
+                        newName: { type: "string" },
+                        maxDepth: { type: "integer", minimum: 0, maximum: 6 },
+                        maxResults: { type: "integer", minimum: 1, maximum: 200 },
+                        query: { type: "string" },
+                        contains: { type: "string" },
+                        caseSensitive: { type: "boolean" },
+                        limit: { type: "integer", minimum: 1, maximum: 300 },
+                        properties: {
+                          type: "object",
+                          additionalProperties: true
+                        },
+                        attributes: {
+                          type: "object",
+                          additionalProperties: true
+                        },
+                        source: { type: "string" },
+                        find: { type: "string" },
+                        replace: { type: "string" },
+                        replaceAll: { type: "boolean" },
+                        items: {
+                          type: "array",
+                          maxItems: 100,
+                          items: { type: "object", additionalProperties: true }
+                        },
+                        tree: {
+                          type: "object",
+                          description: "Nested direct GUI tree with className, name, properties, and children.",
+                          additionalProperties: true
+                        },
+                        paths: {
+                          type: "array",
+                          items: { type: "string" },
+                          maxItems: 100
+                        },
+                        part0Path: { type: "string" },
+                        part1Path: { type: "string" },
+                        attachment0Path: { type: "string" },
+                        attachment1Path: { type: "string" },
+                        cframe: {
+                          type: "array",
+                          items: { type: "number" },
+                          minItems: 3,
+                          maxItems: 12
+                        },
+                        focus: {
+                          type: "array",
+                          items: { type: "number" },
+                          minItems: 3,
+                          maxItems: 3
+                        },
+                        size: {
+                          type: "array",
+                          items: { type: "number" },
+                          minItems: 3,
+                          maxItems: 3
+                        },
+                        position: {
+                          type: "array",
+                          items: { type: "number" },
+                          minItems: 3,
+                          maxItems: 3
+                        },
+                        scale: { type: "number" },
+                        radius: { type: "number" },
+                        material: { type: "string" },
+                        add: {
+                          type: "array",
+                          items: { type: "string" }
+                        },
+                        remove: {
+                          type: "array",
+                          items: { type: "string" }
+                        },
+                        operations: {
+                          type: "array",
+                          maxItems: 50,
+                          items: {
+                            type: "object",
+                            required: ["action", "args"],
+                            properties: {
+                              action: { type: "string" },
+                              args: { type: "object", additionalProperties: true }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            "202": {
+              description: "Command queued",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/CommandStatus" }
+                }
+              }
+            }
+          },
+          security: [{ bearerAuth: [] }]
+        }
+      },
+      "/v1/commands/{commandId}": {
+        get: {
+          operationId: "getRobloxStudioCommandStatus",
+          summary: "Check the status and result of a Roblox Studio command",
+          parameters: [{
+            name: "commandId",
+            in: "path",
+            required: true,
+            schema: { type: "string" }
+          }],
+          responses: {
+            "200": {
+              description: "Current command state",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/CommandStatus" }
+                }
+              }
+            }
+          },
+          security: [{ bearerAuth: [] }]
+        }
+      }
+    },
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer"
+        }
+      },
+      schemas: {
+        CommandStatus: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            action: { type: "string" },
+            status: { type: "string", enum: ["queued", "claimed", "completed", "failed"] },
+            createdAt: { type: "string" },
+            claimedAt: { type: ["string", "null"] },
+            completedAt: { type: ["string", "null"] },
+            result: {},
+            error: { type: ["string", "null"] }
+          }
+        }
+      }
+    }
+  };
+}
+
+function cleanupExpired() {
+  const now = Date.now();
+  for (const [id, command] of commands) {
+    if (now - command.createdMs > commandTtlMs) commands.delete(id);
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+
+    if (req.method === "GET" && url.pathname === "/health") {
+      return json(res, 200, { ok: true, queued: [...commands.values()].filter((c) => c.status === "queued").length });
+    }
+
+    if (req.method === "GET" && url.pathname === "/openapi.json") {
+      return json(res, 200, openApiSchema());
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/plugin/pairings") {
+      cleanupPairings();
+      const { code, device } = createPairing();
+      return json(res, 201, {
+        pairingCode: code,
+        expiresInSeconds: Math.floor(pairingTtlMs / 1000),
+        deviceId: device.id,
+        deviceToken: device.token
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/pairings/resolve") {
+      if (!isActionAuthorized(req)) return json(res, 401, { error: "Unauthorized" });
+      cleanupPairings();
+      const body = await readJson(req);
+      const code = String(body.pairingCode ?? "").replace(/\D/g, "");
+      const pairing = pairingCodes.get(code);
+      if (!pairing) return json(res, 404, { error: "Pairing code is invalid or expired." });
+      pairingCodes.delete(code);
+      return json(res, 200, { deviceId: pairing.deviceId });
+    }
+
+    const pluginRoute = url.pathname.startsWith("/v1/plugin/");
+    if (!pluginRoute && !isActionAuthorized(req)) {
+      return json(res, 401, { error: "Unauthorized" });
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/commands") {
+      const body = await readJson(req);
+      const payload = body.command ?? body.input ?? body;
+      const action = actionAliases.get(payload.action) ?? payload.action;
+      const deviceId = String(payload.deviceId ?? "legacy");
+      if (deviceId !== "legacy" && !devices.has(deviceId)) {
+        return json(res, 404, { error: "Unknown deviceId. Pair this Studio installation first." });
+      }
+      let args = payload.args ?? {};
+      if (typeof args === "string") {
+        try {
+          args = args.trim() === "" ? {} : JSON.parse(args);
+        } catch {
+          return json(res, 400, { error: "args must be a JSON object, not an invalid JSON string." });
+        }
+      }
+      if (!allowedActions.has(action) || !args || typeof args !== "object" || Array.isArray(args)) {
+        return json(res, 400, { error: "Invalid action or args." });
+      }
+      const command = {
+        id: randomUUID(),
+        action,
+        args,
+        deviceId,
+        status: "queued",
+        createdAt: new Date().toISOString(),
+        createdMs: Date.now()
+      };
+      commands.set(command.id, command);
+      return json(res, 202, publicCommand(command));
+    }
+
+    const statusMatch = url.pathname.match(/^\/v1\/commands\/([0-9a-f-]+)$/i);
+    if (req.method === "GET" && statusMatch) {
+      const command = commands.get(statusMatch[1]);
+      return command ? json(res, 200, publicCommand(command)) : json(res, 404, { error: "Command not found." });
+    }
+
+    if (req.method === "GET" && url.pathname === "/v1/plugin/commands/next") {
+      const credentials = deviceCredentials(req);
+      const deviceId = credentials.id || "legacy";
+      if (!isPluginAuthorized(req, deviceId)) return json(res, 401, { error: "Unauthorized" });
+      cleanupExpired();
+      const command = [...commands.values()].find(
+        (item) => item.status === "queued" && item.deviceId === deviceId
+      );
+      if (!command) return json(res, 200, { command: null });
+      command.status = "claimed";
+      command.claimedAt = new Date().toISOString();
+      return json(res, 200, {
+        command: {
+          id: command.id,
+          action: command.action,
+          args: command.args
+        }
+      });
+    }
+
+    const resultMatch = url.pathname.match(/^\/v1\/plugin\/commands\/([0-9a-f-]+)\/result$/i);
+    if (req.method === "POST" && resultMatch) {
+      const command = commands.get(resultMatch[1]);
+      if (!command) return json(res, 404, { error: "Command not found." });
+      if (!isPluginAuthorized(req, command.deviceId)) {
+        return json(res, 401, { error: "Unauthorized" });
+      }
+      const body = await readJson(req);
+      command.status = body.ok ? "completed" : "failed";
+      command.result = body.ok ? (body.result ?? {}) : null;
+      command.error = body.ok ? null : String(body.error ?? "Unknown plugin error");
+      command.completedAt = new Date().toISOString();
+      return json(res, 200, publicCommand(command));
+    }
+
+    return json(res, 404, { error: "Not found" });
+  } catch (error) {
+    const status = error instanceof SyntaxError ? 400 : 500;
+    return json(res, status, { error: error.message });
+  }
+});
+
+server.listen(port, "127.0.0.1", () => {
+  console.log(`Roblox GPT Bridge listening on http://127.0.0.1:${port}`);
+  console.log(`OpenAPI schema: http://127.0.0.1:${port}/openapi.json`);
+});
