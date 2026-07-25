@@ -172,9 +172,9 @@ function openApiSchema() {
   return {
     openapi: "3.1.0",
     info: {
-      title: "Roblox Studio Bridge",
+      title: "Studio Builder Bridge",
       version: "0.1.0",
-      description: "Queue safe editing commands for a connected Roblox Studio plugin."
+      description: "Queue safe editing commands for a connected game editor plugin."
     },
     servers: [{ url: publicBaseUrl }],
     paths: {
@@ -218,7 +218,7 @@ function openApiSchema() {
       "/v1/commands": {
         post: {
           operationId: "sendRobloxStudioCommand",
-          summary: "Send an editing or inspection command to Roblox Studio",
+          summary: "Send an editing or inspection command to the game editor",
           description: "Inspect hierarchy, selection, properties, code, and Output logs; create and edit instances or direct GUI trees; patch scripts; transform models; manage tags; create welds and constraints. The user approves mutations in Studio. After sending, poll with getRobloxStudioCommandStatus.",
           requestBody: {
             required: true,
@@ -365,7 +365,7 @@ function openApiSchema() {
       "/v1/commands/{commandId}": {
         get: {
           operationId: "getRobloxStudioCommandStatus",
-          summary: "Check the status and result of a Roblox Studio command",
+          summary: "Check the status and result of a game editor command",
           parameters: [{
             name: "commandId",
             in: "path",
@@ -425,17 +425,17 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "GET" && url.pathname === "/privacy") {
-      return html(res, "Roblox Studio Bridge Privacy Policy", `
-        <h1>Roblox Studio Bridge Privacy Policy</h1><p>Last updated: July 25, 2026</p>
+      return html(res, "Studio Builder Bridge Privacy Policy", `
+        <h1>Studio Builder Bridge Privacy Policy</h1><p>Last updated: July 25, 2026</p>
         <h2>Data processed</h2><p>The service processes a random Studio device identifier and token, temporary six-digit pairing codes, command arguments, timestamps, results, errors, and basic operational logs. It never requires a Roblox password.</p>
-        <h2>Purpose and retention</h2><p>Data is used only to route commands to the paired Roblox Studio installation, return results, prevent unauthorized access, and diagnose failures. Pairing codes and commands expire automatically. Operational logs are retained only as needed for security and reliability.</p>
+        <h2>Purpose and retention</h2><p>Data is used only to route commands to the paired game editor installation, return results, prevent unauthorized access, and diagnose failures. Pairing codes and commands expire automatically. Operational logs are retained only as needed for security and reliability.</p>
         <h2>Sharing and control</h2><p>Data is not sold. Vercel and Upstash may process data solely to operate the service. Users can revoke access by clearing the plugin pairing or uninstalling the plugin. Studio mutations require approval unless Always Allow is enabled.</p>
         <h2>Contact</h2><p>Support and privacy requests: <a href="https://github.com/ahnminjae08043-glitch/roblox-studio-gpt-bridge/issues">GitHub Issues</a>.</p>`);
     }
 
     if (req.method === "GET" && url.pathname === "/terms") {
-      return html(res, "Roblox Studio Bridge Terms", `
-        <h1>Roblox Studio Bridge Terms</h1><p>This is a development tool. Users must review commands, keep backups, follow Roblox and OpenAI policies, and test generated changes before publishing. Always Allow may automatically execute destructive edits and should be enabled only for a trusted GPT and Bridge server. The service is provided without a guarantee that generated code is correct or suitable for production.</p>`);
+      return html(res, "Studio Builder Bridge Terms", `
+        <h1>Studio Builder Bridge Terms</h1><p>This is a development tool. Users must review commands, keep backups, follow applicable platform policies, and test generated changes before publishing. Always Allow may automatically execute destructive edits and should be enabled only for a trusted assistant and Bridge server. The service is provided without a guarantee that generated code is correct or suitable for production.</p>`);
     }
 
     if (req.method === "GET" && url.pathname === "/openapi.json") {
