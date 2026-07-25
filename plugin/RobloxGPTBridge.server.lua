@@ -156,7 +156,7 @@ pairButton.Text = "Create Pairing Code"
 pairButton.Parent = widget
 
 local pairingLabel = makeBox("", 228, "Pairing code appears here")
-pairingLabel.TextEditable = true
+pairingLabel.TextEditable = false
 pairingLabel.TextColor3 = Color3.fromRGB(160, 175, 240)
 
 local statusLabel = makeLabel("Disconnected", 266, 44)
