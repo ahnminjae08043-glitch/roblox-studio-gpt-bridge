@@ -249,7 +249,7 @@ local function request(method, path, body)
 	return HttpService:JSONDecode(response.Body)
 end
 
-pairButton.Activated:Connect(function()
+local function createPairingCode()
 	local ok, result = pcall(function()
 		local response = HttpService:RequestAsync({
 			Url = normalizeBaseUrl(urlBox.Text) .. "/v1/plugin/pairings",
@@ -262,7 +262,7 @@ pairButton.Activated:Connect(function()
 	end)
 	if not ok then
 		pairingLabel.Text = tostring(result)
-		return
+		return false
 	end
 	deviceId = result.deviceId
 	deviceToken = result.deviceToken
@@ -270,6 +270,11 @@ pairButton.Activated:Connect(function()
 	plugin:SetSetting("BridgeDeviceToken", deviceToken)
 	pairingLabel.Text = "Pairing code: " .. result.pairingCode .. " (10 min)"
 	pairButton.Text = "Refresh Pairing Code"
+	return true
+end
+
+pairButton.Activated:Connect(function()
+	createPairingCode()
 end)
 
 local function splitPath(path)
@@ -969,6 +974,15 @@ connectButton.Activated:Connect(function()
 	if running then
 		plugin:SetSetting("BridgeUrl", urlBox.Text)
 		plugin:SetSetting("BridgeKey", keyBox.Text)
+		if deviceId == "" or deviceToken == "" then
+			statusLabel.Text = "Creating pairing code..."
+			if not createPairingCode() then
+				running = false
+				statusLabel.Text = "Pairing failed — check HTTP Requests and Bridge URL"
+				statusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
+				return
+			end
+		end
 		connectButton.Text = "Disconnect"
 		connectButton.BackgroundColor3 = Color3.fromRGB(170, 70, 70)
 		task.spawn(pollingLoop)
