@@ -693,9 +693,13 @@ export default async function handler(req, res) {
       const body = await readJson(req);
       const payload = body.command ?? body.input ?? body;
       const action = actionAliases.get(payload.action) ?? payload.action;
-      const deviceId = String(payload.deviceId ?? "legacy");
+      const deviceId = String(payload.deviceId ?? "legacy").trim();
       if (deviceId !== "legacy" && !(await getDevice(deviceId))) {
-        return json(res, 404, { error: "Unknown deviceId. Pair this Studio installation first." });
+        return json(res, 404, {
+          error: "Unknown deviceId. Pair this Studio installation again.",
+          errorCode: "STALE_DEVICE_ID",
+          reconnectRequired: true
+        });
       }
       let args = payload.args ?? {};
       if (typeof args === "string") {
