@@ -10,7 +10,13 @@ let child;
 test.before(async () => {
   child = spawn(process.execPath, ["server.mjs"], {
     cwd: new URL("..", import.meta.url),
-    env: { ...process.env, PORT: String(port), BRIDGE_API_KEY: key },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      BRIDGE_API_KEY: key,
+      DEVICE_COMMAND_LIMIT: "10",
+      DEVICE_COMMAND_WINDOW_SECONDS: "600"
+    },
     stdio: "ignore"
   });
   for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -217,4 +223,53 @@ test("pairs a Studio device and isolates its command queue", async () => {
     }
   );
   assert.equal(wrongResult.status, 401);
+});
+
+test("limits command creation per paired device", async () => {
+  const pairingResponse = await fetch(`http://127.0.0.1:${port}/v1/plugin/pairings`, {
+    method: "POST"
+  });
+  const pairing = await pairingResponse.json();
+  const resolveResponse = await fetch(`http://127.0.0.1:${port}/v1/pairings/resolve`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ pairingCode: pairing.pairingCode })
+  });
+  assert.equal(resolveResponse.status, 200);
+
+  for (let index = 0; index < 10; index += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/commands`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        deviceId: pairing.deviceId,
+        action: "get_tree",
+        args: { path: "Workspace" }
+      })
+    });
+    assert.equal(response.status, 202);
+  }
+
+  const limitedResponse = await fetch(`http://127.0.0.1:${port}/v1/commands`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      deviceId: pairing.deviceId,
+      action: "get_tree",
+      args: { path: "Workspace" }
+    })
+  });
+  assert.equal(limitedResponse.status, 429);
+  const limited = await limitedResponse.json();
+  assert.equal(limited.limit, 10);
+  assert.ok(limited.retryAfterSeconds > 0);
 });

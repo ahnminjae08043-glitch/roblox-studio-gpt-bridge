@@ -10,6 +10,7 @@ export const usesRedis = Boolean(redisUrl && redisToken);
 const memoryCommands = new Map();
 const memoryDevices = new Map();
 const memoryPairings = new Map();
+const memoryRateLimits = new Map();
 
 async function redis(...command) {
   const response = await fetch(redisUrl, {
@@ -94,6 +95,40 @@ export async function takePairing(code) {
   return value ? JSON.parse(value) : null;
 }
 
+export async function consumeRateLimit(key, limit, windowSeconds) {
+  if (!usesRedis) {
+    const now = Date.now();
+    const current = memoryRateLimits.get(key);
+    const entry = !current || current.expiresMs <= now
+      ? { count: 0, expiresMs: now + windowSeconds * 1000 }
+      : current;
+    entry.count += 1;
+    memoryRateLimits.set(key, entry);
+    return {
+      allowed: entry.count <= limit,
+      count: entry.count,
+      remaining: Math.max(0, limit - entry.count),
+      retryAfterSeconds: Math.max(1, Math.ceil((entry.expiresMs - now) / 1000))
+    };
+  }
+
+  const script = `
+    local count = redis.call("INCR", KEYS[1])
+    if count == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]) end
+    local ttl = redis.call("TTL", KEYS[1])
+    return {count, ttl}
+  `;
+  const result = await redis("EVAL", script, "1", `rate:${key}`, String(windowSeconds));
+  const count = Number(result[0]);
+  const retryAfterSeconds = Math.max(1, Number(result[1]));
+  return {
+    allowed: count <= limit,
+    count,
+    remaining: Math.max(0, limit - count),
+    retryAfterSeconds
+  };
+}
+
 export function cleanupMemory(now, commandTtlMs) {
   if (usesRedis) return;
   for (const [id, command] of memoryCommands) {
@@ -101,6 +136,9 @@ export function cleanupMemory(now, commandTtlMs) {
   }
   for (const [code, pairing] of memoryPairings) {
     if (pairing.expiresMs <= now) memoryPairings.delete(code);
+  }
+  for (const [key, entry] of memoryRateLimits) {
+    if (entry.expiresMs <= now) memoryRateLimits.delete(key);
   }
 }
 

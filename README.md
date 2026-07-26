@@ -4,6 +4,14 @@
 
 Do not give every user the shared server key. Each Studio installation must press **Create Pairing Code** and give the 12-character code to the configured GPT. The GPT calls `pairRobloxStudio`, receives a `deviceId`, and includes it in every command. The server then isolates commands by device and authenticates the plugin with a device-specific token.
 
+### Free-tier resource controls
+
+- The plugin polls every second for 30 seconds after connection or command activity.
+- When idle, polling slows to once every 8 seconds.
+- The plugin pauses automatically after 15 minutes without a command. Click **Connect** to resume.
+- The API accepts up to 60 commands per paired device in a 10-minute window by default.
+- Override the server limit with `DEVICE_COMMAND_LIMIT` and `DEVICE_COMMAND_WINDOW_SECONDS`.
+
 ### Render deployment
 
 1. Push this directory to a private Git repository.

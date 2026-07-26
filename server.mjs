@@ -3,6 +3,7 @@ import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto
 import {
   claimCommand,
   cleanupMemory,
+  consumeRateLimit,
   getCommand,
   getDevice,
   memoryStats,
@@ -23,6 +24,11 @@ const publicBaseUrl = (
 ).replace(/\/+$/, "");
 const commandTtlMs = Number.parseInt(process.env.COMMAND_TTL_MS ?? "600000", 10);
 const pairingTtlMs = Number.parseInt(process.env.PAIRING_TTL_MS ?? "600000", 10);
+const deviceCommandLimit = Number.parseInt(process.env.DEVICE_COMMAND_LIMIT ?? "60", 10);
+const deviceCommandWindowSeconds = Number.parseInt(
+  process.env.DEVICE_COMMAND_WINDOW_SECONDS ?? "600",
+  10
+);
 
 if (!apiKey || apiKey.length < 16) {
   console.error("BRIDGE_API_KEY must be set to a random value of at least 16 characters.");
@@ -386,6 +392,9 @@ function openApiSchema() {
                   schema: { $ref: "#/components/schemas/CommandStatus" }
                 }
               }
+            },
+            "429": {
+              description: "Per-device command limit reached"
             }
           },
           security: [{ bearerAuth: [] }]
@@ -518,6 +527,19 @@ export default async function handler(req, res) {
       }
       if (!allowedActions.has(action) || !args || typeof args !== "object" || Array.isArray(args)) {
         return json(res, 400, { error: "Invalid action or args." });
+      }
+      const rateLimit = await consumeRateLimit(
+        `commands:${deviceId}`,
+        deviceCommandLimit,
+        deviceCommandWindowSeconds
+      );
+      if (!rateLimit.allowed) {
+        return json(res, 429, {
+          error: `Command limit reached. Try again in ${rateLimit.retryAfterSeconds} seconds.`,
+          limit: deviceCommandLimit,
+          windowSeconds: deviceCommandWindowSeconds,
+          retryAfterSeconds: rateLimit.retryAfterSeconds
+        });
       }
       const command = {
         id: randomUUID(),

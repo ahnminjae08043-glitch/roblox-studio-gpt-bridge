@@ -6,7 +6,10 @@ local Selection = game:GetService("Selection")
 local LogService = game:GetService("LogService")
 
 local DEFAULT_URL = "https://roblox-studio-gpt-bridge.vercel.app"
-local POLL_SECONDS = 1.0
+local ACTIVE_POLL_SECONDS = 1.0
+local IDLE_POLL_SECONDS = 8.0
+local ACTIVE_POLL_WINDOW_SECONDS = 30
+local IDLE_DISCONNECT_SECONDS = 15 * 60
 local MAX_TREE_CHILDREN = 300
 local ALLOWED_CLASSES = {
 	Part = true,
@@ -909,13 +912,19 @@ rejectButton.Activated:Connect(function()
 end)
 
 local function pollingLoop()
+	local lastCommandAt = os.clock()
+	local fastPollingUntil = os.clock() + ACTIVE_POLL_WINDOW_SECONDS
 	while running do
 		local ok, pollResult = pcall(request, "GET", "/v1/plugin/commands/next")
 		if ok then
-			statusLabel.Text = "Connected — waiting for GPT commands"
+			local now = os.clock()
+			local pollSeconds = now < fastPollingUntil and ACTIVE_POLL_SECONDS or IDLE_POLL_SECONDS
+			statusLabel.Text = ("Connected - checking every %ds"):format(pollSeconds)
 			statusLabel.TextColor3 = Color3.fromRGB(110, 220, 140)
 			local command = pollResult.command
 			if command then
+				lastCommandAt = now
+				fastPollingUntil = now + ACTIVE_POLL_WINDOW_SECONDS
 				statusLabel.Text = "Running: " .. command.action
 				local approved = READ_ONLY_ACTIONS[command.action]
 					or awaitApproval(command)
@@ -934,11 +943,20 @@ local function pollingLoop()
 					warn("GPT Bridge could not report the command result:", reportError)
 				end
 			end
+			if os.clock() - lastCommandAt >= IDLE_DISCONNECT_SECONDS then
+				running = false
+				connectButton.Text = "Connect"
+				connectButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+				statusLabel.Text = "Paused after 15 minutes idle - click Connect to resume"
+				statusLabel.TextColor3 = Color3.fromRGB(215, 190, 120)
+				break
+			end
 		else
 			statusLabel.Text = "Connection error: " .. tostring(pollResult)
 			statusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
 		end
-		task.wait(POLL_SECONDS)
+		local pollSeconds = os.clock() < fastPollingUntil and ACTIVE_POLL_SECONDS or IDLE_POLL_SECONDS
+		task.wait(pollSeconds)
 	end
 end
 
@@ -949,7 +967,7 @@ connectButton.Activated:Connect(function()
 			statusLabel.Text = "Creating pairing code..."
 			if not createPairingCode() then
 				running = false
-				statusLabel.Text = "Pairing failed — check HTTP Requests and Bridge URL"
+				statusLabel.Text = "Pairing failed - check HTTP Requests and Bridge URL"
 				statusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
 				return
 			end
