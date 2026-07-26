@@ -224,7 +224,19 @@ function openApiSchema() {
                 "application/json": {
                   schema: {
                     type: "object",
-                    properties: { deviceId: { type: "string" } }
+                    additionalProperties: false,
+                    required: ["paired", "deviceId"],
+                    properties: {
+                      paired: {
+                        type: "boolean",
+                        description: "True only when the pairing code was accepted."
+                      },
+                      deviceId: {
+                        type: "string",
+                        minLength: 1,
+                        description: "Required Studio device ID. Reuse this exact value in every sendRobloxStudioCommand call in this conversation."
+                      }
+                    }
                   }
                 }
               }
@@ -477,7 +489,10 @@ export default async function handler(req, res) {
       const code = String(body.pairingCode ?? "").trim();
       const pairing = await takePairing(code);
       if (!pairing) return json(res, 404, { error: "Pairing code is invalid or expired." });
-      return json(res, 200, { deviceId: pairing.deviceId });
+      return json(res, 200, {
+        paired: true,
+        deviceId: pairing.deviceId
+      });
     }
 
     const pluginRoute = url.pathname.startsWith("/v1/plugin/");

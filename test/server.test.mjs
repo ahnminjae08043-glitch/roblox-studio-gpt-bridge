@@ -171,7 +171,9 @@ test("pairs a Studio device and isolates its command queue", async () => {
     body: JSON.stringify({ pairingCode: pairing.pairingCode })
   });
   assert.equal(resolveResponse.status, 200);
-  assert.equal((await resolveResponse.json()).deviceId, pairing.deviceId);
+  const resolvedPairing = await resolveResponse.json();
+  assert.equal(resolvedPairing.paired, true);
+  assert.equal(resolvedPairing.deviceId, pairing.deviceId);
 
   const createResponse = await fetch(`http://127.0.0.1:${port}/v1/commands`, {
     method: "POST",
