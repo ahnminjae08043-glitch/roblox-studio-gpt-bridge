@@ -770,6 +770,54 @@ local function createGuiNode(spec, parent, created)
 	table.insert(created, instance)
 	local style = spec.style
 	if type(style) == "table" and instance:IsA("GuiObject") then
+		local function gradientColor(value)
+			local color = value
+			if type(value) == "table" and value.color ~= nil then color = value.color end
+			if type(color) == "table" then
+				return Color3.fromRGB(
+					math.clamp(tonumber(color[1]) or 255, 0, 255),
+					math.clamp(tonumber(color[2]) or 255, 0, 255),
+					math.clamp(tonumber(color[3]) or 255, 0, 255)
+				)
+			end
+			if type(color) == "string" then
+				local hex = string.match(color, "^#?(%x%x)(%x%x)(%x%x)$")
+				if hex then
+					local r, g, b = string.match(color, "^#?(%x%x)(%x%x)(%x%x)$")
+					return Color3.fromRGB(tonumber(r, 16), tonumber(g, 16), tonumber(b, 16))
+				end
+			end
+			return Color3.new(1, 1, 1)
+		end
+		local function gradientTime(stop, index, count)
+			local value = type(stop) == "table" and stop.time or nil
+			return math.clamp(tonumber(value) or ((index - 1) / math.max(1, count - 1)), 0, 1)
+		end
+		local function safeColorSequence(stops)
+			local keypoints = {}
+			for index, stop in ipairs(stops) do
+				local stopTable = type(stop) == "table" and stop or { color = stop }
+				table.insert(keypoints, ColorSequenceKeypoint.new(
+					gradientTime(stopTable, index, #stops),
+					gradientColor(stopTable.color or stopTable)
+				))
+			end
+			local ok, sequence = pcall(ColorSequence.new, keypoints)
+			return ok and sequence or nil
+		end
+		local function safeNumberSequence(stops)
+			local keypoints = {}
+			for index, stop in ipairs(stops) do
+				local stopTable = type(stop) == "table" and stop or {}
+				local value = stopTable.value or stopTable.transparency or stopTable[1] or stop
+				table.insert(keypoints, NumberSequenceKeypoint.new(
+					gradientTime(stopTable, index, #stops),
+					math.clamp(tonumber(value) or 0, 0, 1)
+				))
+			end
+			local ok, sequence = pcall(NumberSequence.new, keypoints)
+			return ok and sequence or nil
+		end
 		local gradientTarget = instance
 		local shadowSpec = style.shadow
 		if type(shadowSpec) == "table" and shadowSpec.enabled ~= false then
@@ -818,29 +866,19 @@ local function createGuiNode(spec, parent, created)
 			local gradient = Instance.new("UIGradient")
 			gradient.Name = "__GPTGradient"
 			gradient.Rotation = tonumber(gradientSpec.rotation) or 90
-			gradient.Offset = encodePropertyValue(Vector2.zero, gradientSpec.offset or { 0, 0 })
-			if type(gradientSpec.colors) == "table" and #gradientSpec.colors >= 2 then
-				local keypoints = {}
-				for index, stop in gradientSpec.colors do
-					local time = tonumber(stop.time) or ((index - 1) / (#gradientSpec.colors - 1))
-					table.insert(keypoints, ColorSequenceKeypoint.new(
-						math.clamp(time, 0, 1),
-						encodePropertyValue(Color3.new(1, 1, 1), stop.color or stop)
-					))
-				end
-				gradient.Color = ColorSequence.new(keypoints)
+			local offset = gradientSpec.offset
+			if type(offset) == "table" and tonumber(offset[1]) and tonumber(offset[2]) then
+				gradient.Offset = Vector2.new(tonumber(offset[1]), tonumber(offset[2]))
 			end
-			if type(gradientSpec.transparency) == "table" and #gradientSpec.transparency >= 2 then
-				local keypoints = {}
-				for index, stop in gradientSpec.transparency do
-					local stopTable = type(stop) == "table" and stop or {}
-					local time = tonumber(stopTable.time) or ((index - 1) / (#gradientSpec.transparency - 1))
-					table.insert(keypoints, NumberSequenceKeypoint.new(
-						math.clamp(time, 0, 1),
-						math.clamp(tonumber(stopTable.value or stopTable[1] or stop) or 0, 0, 1)
-					))
-				end
-				gradient.Transparency = NumberSequence.new(keypoints)
+			local colors = gradientSpec.colors or gradientSpec.colorStops
+			if type(colors) == "table" and #colors >= 2 then
+				local sequence = safeColorSequence(colors)
+				if sequence then gradient.Color = sequence end
+			end
+			local transparencies = gradientSpec.transparency or gradientSpec.transparencyStops
+			if type(transparencies) == "table" and #transparencies >= 2 then
+				local sequence = safeNumberSequence(transparencies)
+				if sequence then gradient.Transparency = sequence end
 			end
 			gradient.Parent = gradientTarget
 			table.insert(created, gradient)
