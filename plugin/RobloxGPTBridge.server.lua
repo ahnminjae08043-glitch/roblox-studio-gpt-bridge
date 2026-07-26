@@ -6,7 +6,7 @@ local Selection = game:GetService("Selection")
 local LogService = game:GetService("LogService")
 
 local DEFAULT_URL = "https://roblox-studio-gpt-bridge.vercel.app"
-local PLUGIN_VERSION = "0.3.0"
+local PLUGIN_VERSION = "0.4.0"
 local ACTIVE_POLL_SECONDS = 1.0
 local IDLE_POLL_SECONDS = 8.0
 local INACTIVE_POLL_SECONDS = 20.0
@@ -770,6 +770,7 @@ local function createGuiNode(spec, parent, created)
 	table.insert(created, instance)
 	local style = spec.style
 	if type(style) == "table" and instance:IsA("GuiObject") then
+		local gradientTarget = instance
 		local shadowSpec = style.shadow
 		if type(shadowSpec) == "table" and shadowSpec.enabled ~= false then
 			local shadow = Instance.new("ImageLabel")
@@ -790,6 +791,59 @@ local function createGuiNode(spec, parent, created)
 			shadow.ZIndex = math.max(0, instance.ZIndex - 1)
 			shadow.Parent = parent
 			table.insert(created, shadow)
+		end
+
+		local textureSpec = style.texture
+		if type(textureSpec) == "table" and textureSpec.image then
+			local texture = Instance.new("ImageLabel")
+			texture.Name = instance.Name .. "__GPTTexture"
+			texture.BackgroundTransparency = 1
+			texture.BorderSizePixel = 0
+			texture.Size = UDim2.fromScale(1, 1)
+			texture.Image = tostring(textureSpec.image)
+			texture.ImageColor3 = encodePropertyValue(Color3.new(1, 1, 1), textureSpec.color or { 1, 1, 1 })
+			texture.ImageTransparency = math.clamp(tonumber(textureSpec.transparency) or 0.55, 0, 1)
+			texture.ScaleType = Enum.ScaleType.Tile
+			local tileWidth = math.max(1, tonumber(textureSpec.tileWidth) or tonumber(textureSpec.tileSize) or 128)
+			local tileHeight = math.max(1, tonumber(textureSpec.tileHeight) or tonumber(textureSpec.tileSize) or 128)
+			texture.TileSize = UDim2.fromOffset(tileWidth, tileHeight)
+			texture.ZIndex = instance.ZIndex
+			texture.Parent = instance
+			table.insert(created, texture)
+			gradientTarget = texture
+		end
+
+		local gradientSpec = style.gradient
+		if type(gradientSpec) == "table" then
+			local gradient = Instance.new("UIGradient")
+			gradient.Name = "__GPTGradient"
+			gradient.Rotation = tonumber(gradientSpec.rotation) or 90
+			gradient.Offset = encodePropertyValue(Vector2.zero, gradientSpec.offset or { 0, 0 })
+			if type(gradientSpec.colors) == "table" and #gradientSpec.colors >= 2 then
+				local keypoints = {}
+				for index, stop in gradientSpec.colors do
+					local time = tonumber(stop.time) or ((index - 1) / (#gradientSpec.colors - 1))
+					table.insert(keypoints, ColorSequenceKeypoint.new(
+						math.clamp(time, 0, 1),
+						encodePropertyValue(Color3.new(1, 1, 1), stop.color or stop)
+					))
+				end
+				gradient.Color = ColorSequence.new(keypoints)
+			end
+			if type(gradientSpec.transparency) == "table" and #gradientSpec.transparency >= 2 then
+				local keypoints = {}
+				for index, stop in gradientSpec.transparency do
+					local stopTable = type(stop) == "table" and stop or {}
+					local time = tonumber(stopTable.time) or ((index - 1) / (#gradientSpec.transparency - 1))
+					table.insert(keypoints, NumberSequenceKeypoint.new(
+						math.clamp(time, 0, 1),
+						math.clamp(tonumber(stopTable.value or stopTable[1] or stop) or 0, 0, 1)
+					))
+				end
+				gradient.Transparency = NumberSequence.new(keypoints)
+			end
+			gradient.Parent = gradientTarget
+			table.insert(created, gradient)
 		end
 
 		local corners = style.corners

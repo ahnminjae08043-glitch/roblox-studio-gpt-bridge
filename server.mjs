@@ -47,7 +47,17 @@ const maxRequestBytes = Number.parseInt(process.env.MAX_REQUEST_BYTES ?? "204800
 const maxScriptSourceBytes = Number.parseInt(process.env.MAX_SCRIPT_SOURCE_BYTES ?? "102400", 10);
 const maxGuiNodes = Number.parseInt(process.env.MAX_GUI_NODES ?? "300", 10);
 const pluginBatchLimit = Number.parseInt(process.env.PLUGIN_BATCH_LIMIT ?? "5", 10);
-const bridgeVersion = "0.3.0";
+const bridgeVersion = "0.4.0";
+const uiAssetCatalog = Object.freeze([
+  { key: "classic_basic_square_studs", name: "Basic Square Studs", image: "rbxassetid://78542938995453", theme: "classic", tileSize: 128, defaultTransparency: 0.2, tintable: true },
+  { key: "classic_directional_square_studs", name: "Directional Square Studs", image: "rbxassetid://131129096128477", theme: "classic", tileSize: 128, defaultTransparency: 0.2, tintable: true },
+  { key: "fantasy_burgundy_leather", name: "Burgundy Leather", image: "rbxassetid://108302665978363", theme: "fantasy", tileSize: 256, defaultTransparency: 0.12, tintable: false },
+  { key: "scifi_navy_hex", name: "Sci-Fi Navy Hex", image: "rbxassetid://92250198163836", theme: "scifi", tileSize: 256, defaultTransparency: 0.12, tintable: false },
+  { key: "neutral_charcoal_fabric", name: "Charcoal Fabric", image: "rbxassetid://127171928840261", theme: "neutral", tileSize: 256, defaultTransparency: 0.18, tintable: true },
+  { key: "fantasy_ivory_gold", name: "Ivory Gold Fantasy", image: "rbxassetid://102797233721198", theme: "fantasy", tileSize: 256, defaultTransparency: 0.08, tintable: false },
+  { key: "nature_honey_wood", name: "Honey Wood Nature", image: "rbxassetid://85134607830755", theme: "nature", tileSize: 256, defaultTransparency: 0.1, tintable: false },
+  { key: "magic_purple_crystal", name: "Purple Crystal Magic", image: "rbxassetid://93676710714639", theme: "magic", tileSize: 256, defaultTransparency: 0.1, tintable: false }
+]);
 
 if (!apiKey || apiKey.length < 16) {
   console.error("BRIDGE_API_KEY must be set to a random value of at least 16 characters.");
@@ -249,6 +259,47 @@ function openApiSchema() {
     },
     servers: [{ url: publicBaseUrl }],
     paths: {
+      "/v1/ui-assets": {
+        get: {
+          operationId: "listRobloxUiAssets",
+          summary: "List shared Roblox UI textures",
+          description: "Returns moderated image asset IDs and recommended tiling settings for advanced GUI creation. Use these exact image values with create_gui style.texture.",
+          responses: {
+            "200": {
+              description: "Shared UI texture catalog",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["version", "assets"],
+                    properties: {
+                      version: { type: "string" },
+                      assets: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          required: ["key", "name", "image", "theme", "tileSize", "defaultTransparency", "tintable"],
+                          additionalProperties: false,
+                          properties: {
+                            key: { type: "string" },
+                            name: { type: "string" },
+                            image: { type: "string" },
+                            theme: { type: "string" },
+                            tileSize: { type: "integer" },
+                            defaultTransparency: { type: "number" },
+                            tintable: { type: "boolean" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
       "/v1/pairings/resolve": {
         post: {
           operationId: "pairRobloxStudio",
@@ -325,7 +376,7 @@ function openApiSchema() {
                     },
                     args: {
                       type: "object",
-                      description: "Arguments for the selected action. create_gui tree nodes may include style.cornerRadius, style.corners {topLeft, topRight, bottomRight, bottomLeft}, and style.shadow {enabled, color, transparency, offsetX, offsetY, spread, image}.",
+                      description: "Arguments for the selected action. create_gui tree nodes may include style.cornerRadius; style.corners {topLeft, topRight, bottomRight, bottomLeft}; style.shadow {enabled, color, transparency, offsetX, offsetY, spread, image}; style.texture {image, color, transparency, tileSize, tileWidth, tileHeight}; and style.gradient {rotation, offset, colors, transparency}.",
                       additionalProperties: true,
                       properties: {
                         path: {
@@ -529,6 +580,10 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && url.pathname === "/openapi.json") {
       return json(res, 200, openApiSchema());
+    }
+
+    if (req.method === "GET" && url.pathname === "/v1/ui-assets") {
+      return json(res, 200, { version: bridgeVersion, assets: uiAssetCatalog });
     }
 
     if (req.method === "POST" && url.pathname === "/v1/plugin/pairings") {

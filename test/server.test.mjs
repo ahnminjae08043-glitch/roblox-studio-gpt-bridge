@@ -112,6 +112,7 @@ test("advertises the expanded action set", async () => {
   assert.equal(argumentSchema.properties.parentPath.type, "string");
   assert.equal(argumentSchema.properties.tree.type, "object");
   assert.equal(argumentSchema.properties.operations.type, "array");
+  assert.equal(schema.paths["/v1/ui-assets"].get.operationId, "listRobloxUiAssets");
 
   const pluginSource = await readFile(new URL("../plugin/RobloxGPTBridge.server.lua", import.meta.url), "utf8");
   assert.doesNotMatch(pluginSource, /AlwaysAllow|alwaysAllow/);
@@ -124,8 +125,24 @@ test("advertises the expanded action set", async () => {
   assert.match(pluginSource, /local corners = style\.corners/);
   assert.match(pluginSource, /__GPTShadow/);
   assert.match(pluginSource, /style\.cornerRadius/);
+  assert.match(pluginSource, /__GPTTexture/);
+  assert.match(pluginSource, /Enum\.ScaleType\.Tile/);
+  assert.match(pluginSource, /__GPTGradient/);
+  assert.match(pluginSource, /ColorSequenceKeypoint/);
   const handlers = new Set([...pluginSource.matchAll(/function handlers\.([a-z_]+)/g)].map((match) => match[1]));
   assert.deepEqual(actions.filter((action) => !handlers.has(action)), []);
+});
+
+test("serves the shared UI texture catalog", async () => {
+  const response = await fetch(`http://127.0.0.1:${port}/v1/ui-assets`);
+  assert.equal(response.status, 200);
+  const catalog = await response.json();
+  assert.equal(catalog.version, "0.4.0");
+  assert.equal(catalog.assets.length, 8);
+  assert.equal(catalog.assets[0].key, "classic_basic_square_studs");
+  assert.equal(catalog.assets[0].image, "rbxassetid://78542938995453");
+  assert.equal(catalog.assets[1].image, "rbxassetid://131129096128477");
+  assert.ok(catalog.assets.every((asset) => asset.image.startsWith("rbxassetid://")));
 });
 
 test("queues, claims, and completes a command", async () => {
