@@ -58,6 +58,37 @@ const uiAssetCatalog = Object.freeze([
   { key: "nature_honey_wood", name: "Honey Wood Nature", image: "rbxassetid://85134607830755", theme: "nature", tileSize: 256, defaultTransparency: 0.1, tintable: false },
   { key: "magic_purple_crystal", name: "Purple Crystal Magic", image: "rbxassetid://93676710714639", theme: "magic", tileSize: 256, defaultTransparency: 0.1, tintable: false }
 ]);
+const uiIconSheets = Object.freeze([
+  {
+    category: "core",
+    image: "rbxassetid://96020281784810",
+    keys: ["store", "inventory", "pets", "egg", "trade", "settings", "daily-gift", "trophy", "quests", "teleport", "rebirth", "index", "codes", "boosts", "achievements", "friends", "home", "close", "play", "lock", "unlock", "coin", "gem", "star", "heart", "shield", "sword", "potion", "chest", "crown", "rocket", "magnet", "luck", "timer", "sound", "music"]
+  },
+  {
+    category: "commerce",
+    image: "rbxassetid://113147965704973",
+    keys: ["shopping-cart", "shopping-basket", "storefront", "price-tag", "cash-register", "wallet", "currency-token", "coin-stack", "gem-pile", "money-bag", "credit-card", "receipt", "sale-badge", "limited-time", "vip-pass", "premium", "gift", "coupon", "product-box", "product-crate", "mystery-box", "lucky-block", "safe", "piggy-bank", "upgrade", "level-up", "multiplier", "discount", "refresh-shop", "restock", "potion-bundle", "egg-bundle", "pet-food", "key-bundle", "boost-bottle", "checkout"]
+  },
+  {
+    category: "gameplay-social",
+    image: "rbxassetid://111978857368362",
+    keys: ["pet-face", "add-pet", "pet-fusion", "pet-collar", "pet-hatch", "pet-index", "combat", "helmet", "target", "damage", "training", "boss", "run", "jump", "speed", "teleport-world", "world", "compass", "multiplayer", "add-friend", "handshake", "chat", "party", "guild", "mail", "notification", "announcement", "leaderboard", "profile", "report", "farm", "pickaxe", "fishing", "cooking", "crafting", "resources"]
+  },
+  {
+    category: "controls-events",
+    image: "rbxassetid://81992493620296",
+    keys: ["menu", "more", "back", "forward", "up", "down", "confirm", "cancel", "plus", "minus", "edit", "delete", "visible", "hidden", "camera", "screenshot", "fullscreen", "resize", "volume", "mute", "music-control", "vibration", "keyboard", "controller", "info", "warning", "error", "help", "loading", "cloud-sync", "calendar", "confetti", "fireworks", "snowflake", "hot-streak", "rainbow-luck"]
+  }
+]);
+const uiIconCatalog = Object.freeze(uiIconSheets.flatMap((sheet) =>
+  sheet.keys.map((key, index) => ({
+    key,
+    category: sheet.category,
+    image: sheet.image,
+    rectOffset: [(index % 6) * 170, Math.floor(index / 6) * 170],
+    rectSize: [170, 170]
+  }))
+));
 
 if (!apiKey || apiKey.length < 16) {
   console.error("BRIDGE_API_KEY must be set to a random value of at least 16 characters.");
@@ -289,6 +320,45 @@ function openApiSchema() {
                             tileSize: { type: "integer" },
                             defaultTransparency: { type: "number" },
                             tintable: { type: "boolean" }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/v1/ui-icons": {
+        get: {
+          operationId: "listRobloxUiIcons",
+          summary: "List shared Roblox simulator UI icons",
+          description: "Returns original shared icon atlas IDs and exact ImageRectOffset/ImageRectSize values. Use them on ImageLabel or ImageButton instances.",
+          responses: {
+            "200": {
+              description: "Shared UI icon catalog",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    additionalProperties: false,
+                    required: ["version", "icons"],
+                    properties: {
+                      version: { type: "string" },
+                      icons: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          additionalProperties: false,
+                          required: ["key", "category", "image", "rectOffset", "rectSize"],
+                          properties: {
+                            key: { type: "string" },
+                            category: { type: "string" },
+                            image: { type: "string" },
+                            rectOffset: { type: "array", minItems: 2, maxItems: 2, items: { type: "integer" } },
+                            rectSize: { type: "array", minItems: 2, maxItems: 2, items: { type: "integer" } }
                           }
                         }
                       }
@@ -584,6 +654,10 @@ export default async function handler(req, res) {
 
     if (req.method === "GET" && url.pathname === "/v1/ui-assets") {
       return json(res, 200, { version: bridgeVersion, assets: uiAssetCatalog });
+    }
+
+    if (req.method === "GET" && url.pathname === "/v1/ui-icons") {
+      return json(res, 200, { version: bridgeVersion, icons: uiIconCatalog });
     }
 
     if (req.method === "POST" && url.pathname === "/v1/plugin/pairings") {

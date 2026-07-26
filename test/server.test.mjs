@@ -113,6 +113,7 @@ test("advertises the expanded action set", async () => {
   assert.equal(argumentSchema.properties.tree.type, "object");
   assert.equal(argumentSchema.properties.operations.type, "array");
   assert.equal(schema.paths["/v1/ui-assets"].get.operationId, "listRobloxUiAssets");
+  assert.equal(schema.paths["/v1/ui-icons"].get.operationId, "listRobloxUiIcons");
 
   const pluginSource = await readFile(new URL("../plugin/RobloxGPTBridge.server.lua", import.meta.url), "utf8");
   assert.doesNotMatch(pluginSource, /AlwaysAllow|alwaysAllow/);
@@ -143,6 +144,21 @@ test("serves the shared UI texture catalog", async () => {
   assert.equal(catalog.assets[0].image, "rbxassetid://78542938995453");
   assert.equal(catalog.assets[1].image, "rbxassetid://131129096128477");
   assert.ok(catalog.assets.every((asset) => asset.image.startsWith("rbxassetid://")));
+});
+
+test("serves 144 shared simulator UI icons with atlas rectangles", async () => {
+  const response = await fetch(`http://127.0.0.1:${port}/v1/ui-icons`);
+  assert.equal(response.status, 200);
+  const catalog = await response.json();
+  assert.equal(catalog.version, "0.4.0");
+  assert.equal(catalog.icons.length, 144);
+  const cart = catalog.icons.find((icon) => icon.key === "shopping-cart");
+  assert.equal(cart.image, "rbxassetid://113147965704973");
+  assert.deepEqual(cart.rectOffset, [0, 0]);
+  assert.deepEqual(cart.rectSize, [170, 170]);
+  const music = catalog.icons.find((icon) => icon.key === "music");
+  assert.deepEqual(music.rectOffset, [850, 850]);
+  assert.ok(catalog.icons.every((icon) => icon.rectOffset.every((value) => value % 170 === 0)));
 });
 
 test("queues, claims, and completes a command", async () => {
