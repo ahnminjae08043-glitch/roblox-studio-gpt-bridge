@@ -47,7 +47,7 @@ const maxRequestBytes = Number.parseInt(process.env.MAX_REQUEST_BYTES ?? "204800
 const maxScriptSourceBytes = Number.parseInt(process.env.MAX_SCRIPT_SOURCE_BYTES ?? "102400", 10);
 const maxGuiNodes = Number.parseInt(process.env.MAX_GUI_NODES ?? "300", 10);
 const pluginBatchLimit = Number.parseInt(process.env.PLUGIN_BATCH_LIMIT ?? "5", 10);
-const bridgeVersion = "0.2.0";
+const bridgeVersion = "0.3.0";
 
 if (!apiKey || apiKey.length < 16) {
   console.error("BRIDGE_API_KEY must be set to a random value of at least 16 characters.");
@@ -325,7 +325,7 @@ function openApiSchema() {
                     },
                     args: {
                       type: "object",
-                      description: "Arguments for the selected action.",
+                      description: "Arguments for the selected action. create_gui tree nodes may include style.cornerRadius, style.corners {topLeft, topRight, bottomRight, bottomLeft}, and style.shadow {enabled, color, transparency, offsetX, offsetY, spread, image}.",
                       additionalProperties: true,
                       properties: {
                         path: {

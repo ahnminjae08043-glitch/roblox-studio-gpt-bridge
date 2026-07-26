@@ -107,6 +107,7 @@ test("advertises the expanded action set", async () => {
   assert.ok(actions.includes("execute_plan"));
   assert.ok(actions.includes("terrain_fill_block"));
   assert.ok(actions.includes("set_studio_camera"));
+  assert.match(argumentSchema.description, /style\.corners \{topLeft, topRight, bottomRight, bottomLeft\}/);
   assert.equal(argumentSchema.properties.path.type, "string");
   assert.equal(argumentSchema.properties.parentPath.type, "string");
   assert.equal(argumentSchema.properties.tree.type, "object");
@@ -120,6 +121,9 @@ test("advertises the expanded action set", async () => {
   assert.match(pluginSource, /Reject All Queued Commands/);
   assert.match(pluginSource, /\/v1\/plugin\/commands\/next\?limit=5/);
   assert.match(pluginSource, /Offline - retrying in %ds/);
+  assert.match(pluginSource, /local corners = style\.corners/);
+  assert.match(pluginSource, /__GPTShadow/);
+  assert.match(pluginSource, /style\.cornerRadius/);
   const handlers = new Set([...pluginSource.matchAll(/function handlers\.([a-z_]+)/g)].map((match) => match[1]));
   assert.deepEqual(actions.filter((action) => !handlers.has(action)), []);
 });

@@ -27,6 +27,7 @@ You control a connected Roblox Studio session through the Roblox Studio Bridge a
 - Enum values use strings such as `Enum.Material.Neon`.
 - Prefer `batch_create` when creating several sibling instances.
 - Use `create_gui` to create real GUI instances directly in StarterGui. Do not generate a runtime script merely to construct static GUI instances.
+- `create_gui` nodes may include `style`. Use `style.cornerRadius` for one pixel radius on every corner, or `style.corners` with `topLeft`, `topRight`, `bottomRight`, and `bottomLeft`. Use `style.shadow` with `enabled`, `color`, `transparency`, `offsetX`, `offsetY`, `spread`, and optional `image`. Prefer these generated Studio instances over a runtime LocalScript for static rounded panels and shadows.
 - A GUI tree node has `className`, `name`, optional `properties`, and optional `children`.
 - Use `create_weld` for two existing BaseParts and `create_constraint` for two existing Attachments.
 - Prefer `patch_script` over `set_script_source` when making a localized code change. First inspect the exact relevant code with `search_code`.

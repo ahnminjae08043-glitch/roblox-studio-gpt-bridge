@@ -6,7 +6,7 @@ local Selection = game:GetService("Selection")
 local LogService = game:GetService("LogService")
 
 local DEFAULT_URL = "https://roblox-studio-gpt-bridge.vercel.app"
-local PLUGIN_VERSION = "0.2.0"
+local PLUGIN_VERSION = "0.3.0"
 local ACTIVE_POLL_SECONDS = 1.0
 local IDLE_POLL_SECONDS = 8.0
 local INACTIVE_POLL_SECONDS = 20.0
@@ -768,6 +768,93 @@ local function createGuiNode(spec, parent, created)
 	end
 	instance.Parent = parent
 	table.insert(created, instance)
+	local style = spec.style
+	if type(style) == "table" and instance:IsA("GuiObject") then
+		local shadowSpec = style.shadow
+		if type(shadowSpec) == "table" and shadowSpec.enabled ~= false then
+			local shadow = Instance.new("ImageLabel")
+			shadow.Name = instance.Name .. "__GPTShadow"
+			shadow.BackgroundTransparency = 1
+			shadow.BorderSizePixel = 0
+			shadow.Image = tostring(shadowSpec.image or "rbxassetid://1316045217")
+			shadow.ImageColor3 = encodePropertyValue(Color3.new(), shadowSpec.color or { 0, 0, 0 })
+			shadow.ImageTransparency = math.clamp(tonumber(shadowSpec.transparency) or 0.45, 0, 1)
+			shadow.ScaleType = Enum.ScaleType.Slice
+			shadow.SliceCenter = Rect.new(10, 10, 118, 118)
+			shadow.AnchorPoint = instance.AnchorPoint
+			local offsetX = tonumber(shadowSpec.offsetX) or 0
+			local offsetY = tonumber(shadowSpec.offsetY) or 6
+			local spread = math.max(0, tonumber(shadowSpec.spread) or 12)
+			shadow.Position = instance.Position + UDim2.fromOffset(offsetX - spread, offsetY - spread)
+			shadow.Size = instance.Size + UDim2.fromOffset(spread * 2, spread * 2)
+			shadow.ZIndex = math.max(0, instance.ZIndex - 1)
+			shadow.Parent = parent
+			table.insert(created, shadow)
+		end
+
+		local corners = style.corners
+		if type(corners) == "table" then
+			local topLeft = math.max(0, tonumber(corners.topLeft) or 0)
+			local topRight = math.max(0, tonumber(corners.topRight) or 0)
+			local bottomRight = math.max(0, tonumber(corners.bottomRight) or 0)
+			local bottomLeft = math.max(0, tonumber(corners.bottomLeft) or 0)
+			local fillColor = instance.BackgroundColor3
+			local fillTransparency = instance.BackgroundTransparency
+			instance.BackgroundTransparency = 1
+
+			local decoration = Instance.new("Frame")
+			decoration.Name = "__GPTCornerFill"
+			decoration.BackgroundTransparency = 1
+			decoration.BorderSizePixel = 0
+			decoration.Size = UDim2.fromScale(1, 1)
+			decoration.ZIndex = instance.ZIndex
+			decoration.Parent = instance
+			table.insert(created, decoration)
+
+			local function fill(name, position, size)
+				local frame = Instance.new("Frame")
+				frame.Name = name
+				frame.BorderSizePixel = 0
+				frame.BackgroundColor3 = fillColor
+				frame.BackgroundTransparency = fillTransparency
+				frame.Position = position
+				frame.Size = size
+				frame.ZIndex = instance.ZIndex
+				frame.Parent = decoration
+				table.insert(created, frame)
+				return frame
+			end
+
+			local maxLeft = math.max(topLeft, bottomLeft)
+			local maxRight = math.max(topRight, bottomRight)
+			fill("CenterHorizontal", UDim2.fromOffset(maxLeft, 0), UDim2.new(1, -maxLeft - maxRight, 1, 0))
+			fill("CenterVertical", UDim2.fromOffset(0, math.max(topLeft, topRight)),
+				UDim2.new(1, 0, 1, -math.max(topLeft, topRight) - math.max(bottomLeft, bottomRight)))
+
+			local function corner(name, radius, position)
+				local diameter = radius * 2
+				local frame = fill(name, position, UDim2.fromOffset(math.max(1, diameter), math.max(1, diameter)))
+				frame.AnchorPoint = Vector2.new(0.5, 0.5)
+				if radius > 0 then
+					local uiCorner = Instance.new("UICorner")
+					uiCorner.CornerRadius = UDim.new(1, 0)
+					uiCorner.Parent = frame
+					table.insert(created, uiCorner)
+				end
+			end
+
+			corner("TopLeft", topLeft, UDim2.fromOffset(topLeft, topLeft))
+			corner("TopRight", topRight, UDim2.new(1, -topRight, 0, topRight))
+			corner("BottomRight", bottomRight, UDim2.new(1, -bottomRight, 1, -bottomRight))
+			corner("BottomLeft", bottomLeft, UDim2.new(0, bottomLeft, 1, -bottomLeft))
+		elseif style.cornerRadius ~= nil then
+			local uiCorner = Instance.new("UICorner")
+			uiCorner.Name = "__GPTCorner"
+			uiCorner.CornerRadius = UDim.new(0, math.max(0, tonumber(style.cornerRadius) or 0))
+			uiCorner.Parent = instance
+			table.insert(created, uiCorner)
+		end
+	end
 	for _, childSpec in spec.children or {} do
 		createGuiNode(childSpec, instance, created)
 	end
