@@ -78,7 +78,11 @@ local ALLOWED_CONSTRAINT_CLASSES = {
 }
 
 local toolbar = plugin:CreateToolbar("GPT Bridge")
-local toggleButton = toolbar:CreateButton("GPT Bridge", "Open the GPT Bridge connection panel", "")
+local toggleButton = toolbar:CreateButton(
+	"GPT Bridge",
+	"Open the GPT Bridge connection panel",
+	"rbxassetid://105018980707460"
+)
 toggleButton.ClickableWhenViewportHidden = true
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
