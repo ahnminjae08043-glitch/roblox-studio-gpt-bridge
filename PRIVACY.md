@@ -7,7 +7,7 @@ Roblox Studio Bridge processes commands that a user explicitly sends from a conf
 ## Data processed
 
 - A random Studio device identifier and authentication token.
-- Temporary six-digit pairing codes.
+- Temporary 12-character pairing codes.
 - Command action names, command arguments, timestamps, results, and error messages.
 - Basic service logs required for security and reliability.
 
@@ -23,7 +23,7 @@ Data is not sold. Hosting and infrastructure providers may process data solely t
 
 ## Security and user control
 
-Commands are separated by device identifier and authenticated with device-specific tokens. Studio mutations require approval unless the user enables Always Allow. Users can revoke access by clearing the plugin pairing or uninstalling the plugin.
+Commands are separated by device identifier and authenticated with device-specific tokens. Every Studio mutation requires approval. Users can revoke access by clearing the plugin pairing or uninstalling the plugin.
 
 ## Contact
 

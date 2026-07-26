@@ -195,7 +195,7 @@ function openApiSchema() {
       "/v1/pairings/resolve": {
         post: {
           operationId: "pairRobloxStudio",
-          summary: "Resolve a six-digit Studio pairing code",
+          summary: "Resolve a 12-character Studio pairing code",
           requestBody: {
             required: true,
             content: {
@@ -444,15 +444,15 @@ export default async function handler(req, res) {
     if (req.method === "GET" && url.pathname === "/privacy") {
       return html(res, "Studio Builder Bridge Privacy Policy", `
         <h1>Studio Builder Bridge Privacy Policy</h1><p>Last updated: July 25, 2026</p>
-        <h2>Data processed</h2><p>The service processes a random Studio device identifier and token, temporary six-digit pairing codes, command arguments, timestamps, results, errors, and basic operational logs. It never requires a Roblox password.</p>
+        <h2>Data processed</h2><p>The service processes a random Studio device identifier and token, temporary 12-character pairing codes, command arguments, timestamps, results, errors, and basic operational logs. It never requires a Roblox password.</p>
         <h2>Purpose and retention</h2><p>Data is used only to route commands to the paired game editor installation, return results, prevent unauthorized access, and diagnose failures. Pairing codes and commands expire automatically. Operational logs are retained only as needed for security and reliability.</p>
-        <h2>Sharing and control</h2><p>Data is not sold. Vercel and Upstash may process data solely to operate the service. Users can revoke access by clearing the plugin pairing or uninstalling the plugin. Studio mutations require approval unless Always Allow is enabled.</p>
+        <h2>Sharing and control</h2><p>Data is not sold. Vercel and Upstash may process data solely to operate the service. Users can revoke access by clearing the plugin pairing or uninstalling the plugin. Every Studio mutation requires approval.</p>
         <h2>Contact</h2><p>Support and privacy requests: <a href="https://github.com/ahnminjae08043-glitch/roblox-studio-gpt-bridge/issues">GitHub Issues</a>.</p>`);
     }
 
     if (req.method === "GET" && url.pathname === "/terms") {
       return html(res, "Studio Builder Bridge Terms", `
-        <h1>Studio Builder Bridge Terms</h1><p>This is a development tool. Users must review commands, keep backups, follow applicable platform policies, and test generated changes before publishing. Always Allow may automatically execute destructive edits and should be enabled only for a trusted assistant and Bridge server. The service is provided without a guarantee that generated code is correct or suitable for production.</p>`);
+        <h1>Studio Builder Bridge Terms</h1><p>This is a development tool. Users must review commands, keep backups, follow applicable platform policies, and test generated changes before publishing. Every mutation requires approval in Studio, and additional requests may wait in the device-specific queue. The service is provided without a guarantee that generated code is correct or suitable for production.</p>`);
     }
 
     if (req.method === "GET" && url.pathname === "/openapi.json") {

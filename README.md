@@ -2,7 +2,7 @@
 
 ## Multi-user distribution
 
-Do not give every user the shared server key. Each Studio installation must press **Create Pairing Code** and give the six-digit code to the configured GPT. The GPT calls `pairRobloxStudio`, receives a `deviceId`, and includes it in every command. The server then isolates commands by device and authenticates the plugin with a device-specific token.
+Do not give every user the shared server key. Each Studio installation must press **Create Pairing Code** and give the 12-character code to the configured GPT. The GPT calls `pairRobloxStudio`, receives a `deviceId`, and includes it in every command. The server then isolates commands by device and authenticates the plugin with a device-specific token.
 
 ### Render deployment
 

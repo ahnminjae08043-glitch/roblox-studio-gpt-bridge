@@ -107,6 +107,9 @@ test("advertises the expanded action set", async () => {
   assert.equal(argumentSchema.properties.operations.type, "array");
 
   const pluginSource = await readFile(new URL("../plugin/RobloxGPTBridge.server.lua", import.meta.url), "utf8");
+  assert.doesNotMatch(pluginSource, /AlwaysAllow|alwaysAllow/);
+  assert.match(pluginSource, /or awaitApproval\(command\)/);
+  assert.match(pluginSource, /urlBox\.TextEditable = false/);
   const handlers = new Set([...pluginSource.matchAll(/function handlers\.([a-z_]+)/g)].map((match) => match[1]));
   assert.deepEqual(actions.filter((action) => !handlers.has(action)), []);
 });

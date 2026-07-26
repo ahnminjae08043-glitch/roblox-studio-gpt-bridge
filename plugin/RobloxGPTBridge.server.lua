@@ -91,7 +91,7 @@ local widgetInfo = DockWidgetPluginGuiInfo.new(
 	360
 )
 local widget = plugin:CreateDockWidgetPluginGuiAsync("RobloxGPTBridgeWidget", widgetInfo)
-widget.Title = "Roblox GPT Bridge"
+widget.Title = "Studio Builder Bridge"
 
 local function makeLabel(text, y, height)
 	local label = Instance.new("TextLabel")
@@ -123,12 +123,10 @@ local function makeBox(value, y, placeholder)
 	return box
 end
 
-makeLabel("Bridge URL", 10)
-local savedBridgeUrl = plugin:GetSetting("BridgeUrl") or DEFAULT_URL
-if string.find(savedBridgeUrl, "127.0.0.1", 1, true) or string.find(savedBridgeUrl, "localhost", 1, true) then
-	savedBridgeUrl = DEFAULT_URL
-end
-local urlBox = makeBox(savedBridgeUrl, 34, DEFAULT_URL)
+makeLabel("Bridge service (fixed for safety)", 10)
+local urlBox = makeBox(DEFAULT_URL, 34, DEFAULT_URL)
+urlBox.TextEditable = false
+urlBox.TextColor3 = Color3.fromRGB(170, 185, 225)
 
 local connectButton = Instance.new("TextButton")
 connectButton.Position = UDim2.fromOffset(12, 82)
@@ -188,25 +186,7 @@ rejectButton.Text = "Reject"
 rejectButton.Visible = false
 rejectButton.Parent = widget
 
-local alwaysAllowChanges = plugin:GetSetting("AlwaysAllowChanges") == true
-local alwaysAllowButton = Instance.new("TextButton")
-alwaysAllowButton.Position = UDim2.new(0, 12, 0, 374)
-alwaysAllowButton.Size = UDim2.new(1, -24, 0, 36)
-alwaysAllowButton.BorderSizePixel = 0
-alwaysAllowButton.Font = Enum.Font.SourceSansSemibold
-alwaysAllowButton.TextSize = 17
-alwaysAllowButton.TextColor3 = Color3.new(1, 1, 1)
-alwaysAllowButton.Parent = widget
-
-local function refreshAlwaysAllowButton()
-	alwaysAllowButton.Text = alwaysAllowChanges and "Always Allow: ON" or "Always Allow: OFF"
-	alwaysAllowButton.BackgroundColor3 = alwaysAllowChanges
-		and Color3.fromRGB(190, 105, 35)
-		or Color3.fromRGB(70, 70, 70)
-end
-refreshAlwaysAllowButton()
-
-local safetyLabel = makeLabel("Read-only commands run automatically. Always Allow automatically approves every change.", 418, 58)
+local safetyLabel = makeLabel("Safety mode: every change requires approval. New requests wait safely in the server queue.", 374, 58)
 safetyLabel.TextWrapped = true
 safetyLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 
@@ -924,15 +904,6 @@ rejectButton.Activated:Connect(function()
 	if pendingDecision == nil then pendingDecision = false end
 end)
 
-alwaysAllowButton.Activated:Connect(function()
-	alwaysAllowChanges = not alwaysAllowChanges
-	plugin:SetSetting("AlwaysAllowChanges", alwaysAllowChanges)
-	refreshAlwaysAllowButton()
-	if alwaysAllowChanges and pendingDecision == nil and approveButton.Visible then
-		pendingDecision = true
-	end
-end)
-
 local function pollingLoop()
 	while running do
 		local ok, pollResult = pcall(request, "GET", "/v1/plugin/commands/next")
@@ -943,7 +914,6 @@ local function pollingLoop()
 			if command then
 				statusLabel.Text = "Running: " .. command.action
 				local approved = READ_ONLY_ACTIONS[command.action]
-					or alwaysAllowChanges
 					or awaitApproval(command)
 				local commandOk, result
 				if approved then
@@ -971,7 +941,6 @@ end
 connectButton.Activated:Connect(function()
 	running = not running
 	if running then
-		plugin:SetSetting("BridgeUrl", urlBox.Text)
 		if deviceId == "" or deviceToken == "" then
 			statusLabel.Text = "Creating pairing code..."
 			if not createPairingCode() then
