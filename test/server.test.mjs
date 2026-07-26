@@ -70,7 +70,7 @@ test("accepts omitted, stringified, wrapped, and aliased inspection args", async
       },
       body: JSON.stringify(body)
     });
-    assert.equal(response.status, 202);
+    assert.ok([200, 202].includes(response.status));
     const command = await response.json();
     assert.equal(command.action, "get_tree");
 
@@ -116,6 +116,10 @@ test("advertises the expanded action set", async () => {
   assert.doesNotMatch(pluginSource, /AlwaysAllow|alwaysAllow/);
   assert.match(pluginSource, /or awaitApproval\(command\)/);
   assert.match(pluginSource, /urlBox\.TextEditable = false/);
+  assert.match(pluginSource, /INACTIVE_POLL_SECONDS = 20\.0/);
+  assert.match(pluginSource, /Reject All Queued Commands/);
+  assert.match(pluginSource, /\/v1\/plugin\/commands\/next\?limit=5/);
+  assert.match(pluginSource, /Offline - retrying in %ds/);
   const handlers = new Set([...pluginSource.matchAll(/function handlers\.([a-z_]+)/g)].map((match) => match[1]));
   assert.deepEqual(actions.filter((action) => !handlers.has(action)), []);
 });
@@ -195,6 +199,22 @@ test("pairs a Studio device and isolates its command queue", async () => {
   });
   assert.equal(createResponse.status, 202);
   const command = await createResponse.json();
+  const duplicateResponse = await fetch(`http://127.0.0.1:${port}/v1/commands`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      deviceId: pairing.deviceId,
+      action: "get_tree",
+      args: { path: "Workspace" }
+    })
+  });
+  assert.equal(duplicateResponse.status, 200);
+  const duplicate = await duplicateResponse.json();
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(duplicate.id, command.id);
 
   const legacyClaim = await fetch(`http://127.0.0.1:${port}/v1/plugin/commands/next`, {
     headers: { "x-bridge-key": key }
@@ -225,6 +245,63 @@ test("pairs a Studio device and isolates its command queue", async () => {
   assert.equal(wrongResult.status, 401);
 });
 
+test("claims commands in batches and rejects the remaining queue", async () => {
+  const pairingResponse = await fetch(`http://127.0.0.1:${port}/v1/plugin/pairings`, {
+    method: "POST"
+  });
+  const pairing = await pairingResponse.json();
+  await fetch(`http://127.0.0.1:${port}/v1/pairings/resolve`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ pairingCode: pairing.pairingCode })
+  });
+
+  for (let index = 0; index < 3; index += 1) {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/commands`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        deviceId: pairing.deviceId,
+        action: "get_tree",
+        args: { path: `Workspace/Batch${index}` }
+      })
+    });
+    assert.equal(response.status, 202);
+  }
+
+  const deviceHeaders = {
+    "x-device-id": pairing.deviceId,
+    "x-device-token": pairing.deviceToken
+  };
+  const batchResponse = await fetch(
+    `http://127.0.0.1:${port}/v1/plugin/commands/next?limit=2`,
+    { headers: deviceHeaders }
+  );
+  const batch = await batchResponse.json();
+  assert.equal(batch.commands.length, 2);
+  assert.equal(batch.queueCount, 1);
+
+  const rejectResponse = await fetch(
+    `http://127.0.0.1:${port}/v1/plugin/commands/reject-all`,
+    {
+      method: "POST",
+      headers: {
+        ...deviceHeaders,
+        "content-type": "application/json"
+      },
+      body: "{}"
+    }
+  );
+  assert.equal(rejectResponse.status, 200);
+  assert.equal((await rejectResponse.json()).rejected, 1);
+});
+
 test("limits command creation per paired device", async () => {
   const pairingResponse = await fetch(`http://127.0.0.1:${port}/v1/plugin/pairings`, {
     method: "POST"
@@ -250,7 +327,7 @@ test("limits command creation per paired device", async () => {
       body: JSON.stringify({
         deviceId: pairing.deviceId,
         action: "get_tree",
-        args: { path: "Workspace" }
+        args: { path: `Workspace/Test${index}` }
       })
     });
     assert.equal(response.status, 202);
@@ -265,7 +342,7 @@ test("limits command creation per paired device", async () => {
     body: JSON.stringify({
       deviceId: pairing.deviceId,
       action: "get_tree",
-      args: { path: "Workspace" }
+      args: { path: "Workspace/OverLimit" }
     })
   });
   assert.equal(limitedResponse.status, 429);

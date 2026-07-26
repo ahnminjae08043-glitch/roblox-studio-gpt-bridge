@@ -6,8 +6,10 @@ local Selection = game:GetService("Selection")
 local LogService = game:GetService("LogService")
 
 local DEFAULT_URL = "https://roblox-studio-gpt-bridge.vercel.app"
+local PLUGIN_VERSION = "0.2.0"
 local ACTIVE_POLL_SECONDS = 1.0
 local IDLE_POLL_SECONDS = 8.0
+local INACTIVE_POLL_SECONDS = 20.0
 local ACTIVE_POLL_WINDOW_SECONDS = 30
 local IDLE_DISCONNECT_SECONDS = 15 * 60
 local MAX_TREE_CHILDREN = 300
@@ -93,9 +95,9 @@ local widgetInfo = DockWidgetPluginGuiInfo.new(
 	false,
 	false,
 	380,
-	560,
+	680,
 	300,
-	360
+	460
 )
 local widget = plugin:CreateDockWidgetPluginGuiAsync("RobloxGPTBridgeWidget", widgetInfo)
 widget.Title = "Studio Builder Bridge"
@@ -189,7 +191,7 @@ rejectButton.BorderSizePixel = 0
 rejectButton.Font = Enum.Font.SourceSansSemibold
 rejectButton.TextSize = 17
 rejectButton.TextColor3 = Color3.new(1, 1, 1)
-rejectButton.Text = "Reject"
+rejectButton.Text = "Next (Reject)"
 rejectButton.Visible = false
 rejectButton.Parent = widget
 
@@ -197,8 +199,53 @@ local safetyLabel = makeLabel("Safety mode: every change requires approval. New 
 safetyLabel.TextWrapped = true
 safetyLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 
+local queueLabel = makeLabel("Queue: 0", 434, 22)
+queueLabel.TextColor3 = Color3.fromRGB(180, 200, 235)
+
+local usageLabel = makeLabel("Limits: loading...", 458, 22)
+usageLabel.TextColor3 = Color3.fromRGB(180, 200, 180)
+
+local historyLabel = makeLabel("Recent: no completed commands", 482, 48)
+historyLabel.TextWrapped = true
+historyLabel.TextColor3 = Color3.fromRGB(165, 165, 165)
+
+local reconnectButton = Instance.new("TextButton")
+reconnectButton.Position = UDim2.new(0, 12, 0, 536)
+reconnectButton.Size = UDim2.new(0.5, -18, 0, 34)
+reconnectButton.BackgroundColor3 = Color3.fromRGB(55, 110, 175)
+reconnectButton.BorderSizePixel = 0
+reconnectButton.Font = Enum.Font.SourceSansSemibold
+reconnectButton.TextSize = 16
+reconnectButton.TextColor3 = Color3.new(1, 1, 1)
+reconnectButton.Text = "Reconnect"
+reconnectButton.Parent = widget
+
+local resetButton = Instance.new("TextButton")
+resetButton.Position = UDim2.new(0.5, 6, 0, 536)
+resetButton.Size = UDim2.new(0.5, -18, 0, 34)
+resetButton.BackgroundColor3 = Color3.fromRGB(145, 70, 70)
+resetButton.BorderSizePixel = 0
+resetButton.Font = Enum.Font.SourceSansSemibold
+resetButton.TextSize = 16
+resetButton.TextColor3 = Color3.new(1, 1, 1)
+resetButton.Text = "Reset Device"
+resetButton.Parent = widget
+
+local rejectAllButton = Instance.new("TextButton")
+rejectAllButton.Position = UDim2.new(0, 12, 0, 578)
+rejectAllButton.Size = UDim2.new(1, -24, 0, 34)
+rejectAllButton.BackgroundColor3 = Color3.fromRGB(105, 65, 65)
+rejectAllButton.BorderSizePixel = 0
+rejectAllButton.Font = Enum.Font.SourceSansSemibold
+rejectAllButton.TextSize = 16
+rejectAllButton.TextColor3 = Color3.new(1, 1, 1)
+rejectAllButton.Text = "Reject All Queued Commands"
+rejectAllButton.Parent = widget
+
 local running = false
+local connectionGeneration = 0
 local pendingDecision = nil
+local commandBuffer = {}
 local outputLogs = {}
 local deviceId = plugin:GetSetting("BridgeDeviceId") or ""
 local deviceToken = plugin:GetSetting("BridgeDeviceToken") or ""
@@ -884,6 +931,27 @@ end
 local function commandSummary(command)
 	local args = command.args or {}
 	local target = args.path or args.parentPath or args.rootPath or ""
+	if command.action == "delete_instance" then
+		return ("WARNING: DELETE INSTANCE\nTarget: %s\nThis cannot be restored except with Studio Undo."):format(target)
+	end
+	if command.action == "set_script_source" then
+		local source = tostring(args.source or "")
+		local preview = string.gsub(string.sub(source, 1, 180), "\n", " ")
+		return ("WARNING: REPLACE SCRIPT\nTarget: %s\n%d characters\nPreview: %s"):format(
+			target,
+			#source,
+			preview
+		)
+	end
+	if command.action == "patch_script" then
+		local findPreview = string.gsub(string.sub(tostring(args.find or ""), 1, 100), "\n", " ")
+		local replacePreview = string.gsub(string.sub(tostring(args.replace or ""), 1, 100), "\n", " ")
+		return ("PATCH SCRIPT\nTarget: %s\nFind: %s\nReplace: %s"):format(
+			target,
+			findPreview,
+			replacePreview
+		)
+	end
 	if target ~= "" then
 		return ("%s\nTarget: %s"):format(command.action, target)
 	end
@@ -911,18 +979,79 @@ rejectButton.Activated:Connect(function()
 	if pendingDecision == nil then pendingDecision = false end
 end)
 
-local function pollingLoop()
+local function updateBridgeStats(pollResult)
+	local serverQueue = tonumber(pollResult.queueCount) or 0
+	queueLabel.Text = ("Queue: %d waiting, %d buffered"):format(serverQueue, #commandBuffer)
+	local usage = pollResult.usage or {}
+	usageLabel.Text = ("Limits remaining: %s / 10 min, %s / day"):format(
+		tostring(usage.shortRemaining or "?"),
+		tostring(usage.dailyRemaining or "?")
+	)
+	if pollResult.version and pollResult.version ~= PLUGIN_VERSION then
+		statusLabel.Text = ("Update available: plugin %s / server %s"):format(
+			PLUGIN_VERSION,
+			tostring(pollResult.version)
+		)
+		statusLabel.TextColor3 = Color3.fromRGB(240, 185, 75)
+	end
+	local history = pollResult.history or {}
+	if history[1] then
+		local latest = history[1]
+		historyLabel.Text = ("%s: %s - %s"):format(
+			latest.ok and "Recent OK" or "Recent FAILED",
+			tostring(latest.action or "command"),
+			tostring(latest.completedAt or "")
+		)
+	end
+end
+
+local function reportBufferedRejection(command)
+	pcall(request, "POST", "/v1/plugin/commands/" .. command.id .. "/result", {
+		ok = false,
+		error = "Rejected by Reject All in Roblox Studio.",
+	})
+end
+
+rejectAllButton.Activated:Connect(function()
+	if pendingDecision == nil and approveButton.Visible then pendingDecision = false end
+	for _, command in ipairs(commandBuffer) do
+		reportBufferedRejection(command)
+	end
+	table.clear(commandBuffer)
+	local ok, result = pcall(request, "POST", "/v1/plugin/commands/reject-all", {})
+	queueLabel.Text = ok
+		and ("Queue cleared: %d rejected"):format(tonumber(result.rejected) or 0)
+		or ("Could not clear queue: " .. tostring(result))
+end)
+
+local function pollingLoop(generation)
 	local lastCommandAt = os.clock()
 	local fastPollingUntil = os.clock() + ACTIVE_POLL_WINDOW_SECONDS
-	while running do
-		local ok, pollResult = pcall(request, "GET", "/v1/plugin/commands/next")
+	local consecutiveErrors = 0
+	while running and generation == connectionGeneration do
+		local pollResult = nil
+		local ok = true
+		if #commandBuffer == 0 then
+			ok, pollResult = pcall(request, "GET", "/v1/plugin/commands/next?limit=5")
+		end
 		if ok then
+			consecutiveErrors = 0
+			if pollResult then
+				updateBridgeStats(pollResult)
+				local commands = pollResult.commands or {}
+				if #commands == 0 and pollResult.command then commands = { pollResult.command } end
+				for _, queuedCommand in ipairs(commands) do
+					table.insert(commandBuffer, queuedCommand)
+				end
+			end
 			local now = os.clock()
-			local pollSeconds = now < fastPollingUntil and ACTIVE_POLL_SECONDS or IDLE_POLL_SECONDS
+			local pollSeconds = not widget.Enabled and INACTIVE_POLL_SECONDS
+				or (now < fastPollingUntil and ACTIVE_POLL_SECONDS or IDLE_POLL_SECONDS)
 			statusLabel.Text = ("Connected - checking every %ds"):format(pollSeconds)
 			statusLabel.TextColor3 = Color3.fromRGB(110, 220, 140)
-			local command = pollResult.command
+			local command = table.remove(commandBuffer, 1)
 			if command then
+				queueLabel.Text = ("Queue: %d buffered"):format(#commandBuffer)
 				lastCommandAt = now
 				fastPollingUntil = now + ACTIVE_POLL_WINDOW_SECONDS
 				statusLabel.Text = "Running: " .. command.action
@@ -942,6 +1071,9 @@ local function pollingLoop()
 				if not reportOk then
 					warn("GPT Bridge could not report the command result:", reportError)
 				end
+				historyLabel.Text = commandOk
+					and ("Recent: OK - " .. command.action)
+					or ("Recent: FAILED - " .. command.action .. " - " .. string.sub(tostring(result), 1, 100))
 			end
 			if os.clock() - lastCommandAt >= IDLE_DISCONNECT_SECONDS then
 				running = false
@@ -952,21 +1084,42 @@ local function pollingLoop()
 				break
 			end
 		else
+			consecutiveErrors += 1
 			statusLabel.Text = "Connection error: " .. tostring(pollResult)
 			statusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
 		end
-		local pollSeconds = os.clock() < fastPollingUntil and ACTIVE_POLL_SECONDS or IDLE_POLL_SECONDS
+		local pollSeconds
+		if consecutiveErrors > 0 then
+			pollSeconds = consecutiveErrors == 1 and 2 or (consecutiveErrors == 2 and 5 or 15)
+			statusLabel.Text = ("Offline - retrying in %ds"):format(pollSeconds)
+		elseif not widget.Enabled then
+			pollSeconds = INACTIVE_POLL_SECONDS
+		else
+			pollSeconds = os.clock() < fastPollingUntil and ACTIVE_POLL_SECONDS or IDLE_POLL_SECONDS
+		end
 		task.wait(pollSeconds)
 	end
 end
 
-connectButton.Activated:Connect(function()
-	running = not running
-	if running then
+local function stopConnection(message)
+	running = false
+	connectionGeneration += 1
+	connectButton.Text = "Connect"
+	connectButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+	statusLabel.Text = message or "Disconnected"
+	statusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+end
+
+local function startConnection()
+	if running then stopConnection("Reconnecting...") end
+	connectionGeneration += 1
+	local generation = connectionGeneration
+	running = true
+	task.spawn(function()
 		if deviceId == "" or deviceToken == "" then
 			statusLabel.Text = "Creating pairing code..."
 			if not createPairingCode() then
-				running = false
+				stopConnection("Pairing failed - check HTTP Requests and Bridge URL")
 				statusLabel.Text = "Pairing failed - check HTTP Requests and Bridge URL"
 				statusLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
 				return
@@ -974,19 +1127,47 @@ connectButton.Activated:Connect(function()
 		end
 		connectButton.Text = "Disconnect"
 		connectButton.BackgroundColor3 = Color3.fromRGB(170, 70, 70)
-		task.spawn(pollingLoop)
+		local statusOk, bridgeStatus = pcall(request, "GET", "/v1/plugin/status")
+		if statusOk then updateBridgeStats(bridgeStatus) end
+		pollingLoop(generation)
+	end)
+end
+
+connectButton.Activated:Connect(function()
+	if running then
+		stopConnection("Disconnected")
 	else
-		connectButton.Text = "Connect"
-		connectButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
-		statusLabel.Text = "Disconnected"
-		statusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+		startConnection()
 	end
+end)
+
+reconnectButton.Activated:Connect(startConnection)
+
+resetButton.Activated:Connect(function()
+	if deviceId ~= "" and deviceToken ~= "" then
+		pcall(request, "DELETE", "/v1/plugin/device")
+	end
+	stopConnection("Device reset - create a new pairing code")
+	deviceId = ""
+	deviceToken = ""
+	commandBuffer = {}
+	plugin:SetSetting("BridgeDeviceId", "")
+	plugin:SetSetting("BridgeDeviceToken", "")
+	pairingLabel.Text = ""
+	pairButton.Text = "Create Pairing Code"
+	queueLabel.Text = "Queue: 0"
+	usageLabel.Text = "Limits: pair again to load"
 end)
 
 toggleButton.Click:Connect(function()
 	widget.Enabled = not widget.Enabled
 end)
 
+if deviceId ~= "" and deviceToken ~= "" then
+	statusLabel.Text = "Restoring saved device connection..."
+	task.defer(startConnection)
+end
+
 plugin.Unloading:Connect(function()
-	running = false
+	stopConnection("Plugin unloaded")
 end)

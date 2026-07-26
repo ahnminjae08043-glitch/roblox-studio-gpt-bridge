@@ -10,6 +10,9 @@ Do not give every user the shared server key. Each Studio installation must pres
 - When idle, polling slows to once every 8 seconds.
 - The plugin pauses automatically after 15 minutes without a command. Click **Connect** to resume.
 - The API accepts up to 60 commands per paired device in a 10-minute window by default.
+- Each paired device receives up to 300 commands per day and 20 queued commands by default.
+- Identical commands are deduplicated during the command lifetime.
+- Plugin requests are capped at 200 KB, script changes at 100 KB, and direct GUI trees at 300 nodes.
 - Override the server limit with `DEVICE_COMMAND_LIMIT` and `DEVICE_COMMAND_WINDOW_SECONDS`.
 
 ### Render deployment

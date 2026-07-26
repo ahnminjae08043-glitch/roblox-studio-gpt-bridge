@@ -1,12 +1,19 @@
 import http from "node:http";
-import { randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import {
-  claimCommand,
+  claimCommands,
   cleanupMemory,
+  countQueuedCommands,
   consumeRateLimit,
+  deleteDevice,
   getCommand,
   getDevice,
+  getHistory,
+  getRateLimitStatus,
   memoryStats,
+  recordHistory,
+  rejectQueuedCommands,
+  reserveDedupe,
   saveCommand,
   saveDevice,
   savePairing,
@@ -29,6 +36,18 @@ const deviceCommandWindowSeconds = Number.parseInt(
   process.env.DEVICE_COMMAND_WINDOW_SECONDS ?? "600",
   10
 );
+const dailyCommandLimit = Number.parseInt(process.env.DAILY_COMMAND_LIMIT ?? "300", 10);
+const maxDeviceQueue = Number.parseInt(process.env.MAX_DEVICE_QUEUE ?? "20", 10);
+const globalCommandLimit = Number.parseInt(process.env.GLOBAL_COMMAND_LIMIT ?? "1000", 10);
+const globalCommandWindowSeconds = Number.parseInt(
+  process.env.GLOBAL_COMMAND_WINDOW_SECONDS ?? "60",
+  10
+);
+const maxRequestBytes = Number.parseInt(process.env.MAX_REQUEST_BYTES ?? "204800", 10);
+const maxScriptSourceBytes = Number.parseInt(process.env.MAX_SCRIPT_SOURCE_BYTES ?? "102400", 10);
+const maxGuiNodes = Number.parseInt(process.env.MAX_GUI_NODES ?? "300", 10);
+const pluginBatchLimit = Number.parseInt(process.env.PLUGIN_BATCH_LIMIT ?? "5", 10);
+const bridgeVersion = "0.2.0";
 
 if (!apiKey || apiKey.length < 16) {
   console.error("BRIDGE_API_KEY must be set to a random value of at least 16 characters.");
@@ -103,8 +122,10 @@ async function readJson(req) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 256 * 1024) {
-      throw new Error("Request body is too large.");
+    if (size > maxRequestBytes) {
+      const error = new Error(`Request body exceeds ${maxRequestBytes} bytes.`);
+      error.status = 413;
+      throw error;
     }
     chunks.push(chunk);
   }
@@ -116,6 +137,36 @@ function constantTimeEqual(left, right) {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(
+      (key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`
+    ).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function countGuiNodes(node) {
+  if (!node || typeof node !== "object") return 0;
+  return 1 + (Array.isArray(node.children)
+    ? node.children.reduce((total, child) => total + countGuiNodes(child), 0)
+    : 0);
+}
+
+function validateCommandSize(action, args) {
+  if (
+    (action === "set_script_source" || action === "patch_script")
+    && Buffer.byteLength(String(args.source ?? args.replace ?? ""), "utf8") > maxScriptSourceBytes
+  ) {
+    return `Script content exceeds ${maxScriptSourceBytes} bytes.`;
+  }
+  if (action === "create_gui" && countGuiNodes(args.tree) > maxGuiNodes) {
+    return `GUI tree exceeds ${maxGuiNodes} nodes.`;
+  }
+  return null;
 }
 
 function isActionAuthorized(req) {
@@ -193,7 +244,7 @@ function openApiSchema() {
     openapi: "3.1.0",
     info: {
       title: "Studio Builder Bridge",
-      version: "0.1.0",
+      version: bridgeVersion,
       description: "Queue safe editing commands for a connected game editor plugin."
     },
     servers: [{ url: publicBaseUrl }],
@@ -466,14 +517,14 @@ export default async function handler(req, res) {
       return html(res, "Studio Builder Bridge Privacy Policy", `
         <h1>Studio Builder Bridge Privacy Policy</h1><p>Last updated: July 25, 2026</p>
         <h2>Data processed</h2><p>The service processes a random Studio device identifier and token, temporary 12-character pairing codes, command arguments, timestamps, results, errors, and basic operational logs. It never requires a Roblox password.</p>
-        <h2>Purpose and retention</h2><p>Data is used only to route commands to the paired game editor installation, return results, prevent unauthorized access, and diagnose failures. Pairing codes and commands expire automatically. Operational logs are retained only as needed for security and reliability.</p>
-        <h2>Sharing and control</h2><p>Data is not sold. Vercel and Upstash may process data solely to operate the service. Users can revoke access by clearing the plugin pairing or uninstalling the plugin. Every Studio mutation requires approval.</p>
+        <h2>Purpose and retention</h2><p>Data is used only to route commands to the paired game editor installation, return results, prevent unauthorized access, and diagnose failures. Pairing codes and commands expire automatically. A small recent success/failure history is retained for up to seven days.</p>
+        <h2>Sharing and control</h2><p>Data is not sold. Vercel and Upstash may process data solely to operate the service. Users can revoke access with Reset Device, by clearing the plugin pairing, or by uninstalling the plugin. Every Studio mutation requires approval.</p>
         <h2>Contact</h2><p>Support and privacy requests: <a href="https://github.com/ahnminjae08043-glitch/roblox-studio-gpt-bridge/issues">GitHub Issues</a>.</p>`);
     }
 
     if (req.method === "GET" && url.pathname === "/terms") {
       return html(res, "Studio Builder Bridge Terms", `
-        <h1>Studio Builder Bridge Terms</h1><p>This is a development tool. Users must review commands, keep backups, follow applicable platform policies, and test generated changes before publishing. Every mutation requires approval in Studio, and additional requests may wait in the device-specific queue. The service is provided without a guarantee that generated code is correct or suitable for production.</p>`);
+        <h1>Studio Builder Bridge Terms</h1><p>This is a development tool. Users must review commands, keep backups, follow applicable platform policies, and test generated changes before publishing. Every mutation requires approval in Studio, and additional requests may wait in the device-specific queue. The hosted service uses fair-use command, daily, queue, and payload limits. A Creator Store purchase is a one-time plugin purchase and does not create a recurring Bridge subscription. The service is provided without a guarantee that generated code is correct or suitable for production.</p>`);
     }
 
     if (req.method === "GET" && url.pathname === "/openapi.json") {
@@ -528,17 +579,54 @@ export default async function handler(req, res) {
       if (!allowedActions.has(action) || !args || typeof args !== "object" || Array.isArray(args)) {
         return json(res, 400, { error: "Invalid action or args." });
       }
-      const rateLimit = await consumeRateLimit(
+      const sizeError = validateCommandSize(action, args);
+      if (sizeError) return json(res, 413, { error: sizeError });
+
+      const globalRateLimit = await consumeRateLimit(
+        "commands:global",
+        globalCommandLimit,
+        globalCommandWindowSeconds
+      );
+      if (!globalRateLimit.allowed) {
+        return json(res, 503, {
+          error: "The Bridge is temporarily busy. Try again shortly.",
+          retryAfterSeconds: globalRateLimit.retryAfterSeconds
+        });
+      }
+
+      const shortRateLimit = await consumeRateLimit(
         `commands:${deviceId}`,
         deviceCommandLimit,
         deviceCommandWindowSeconds
       );
-      if (!rateLimit.allowed) {
+      if (!shortRateLimit.allowed) {
         return json(res, 429, {
-          error: `Command limit reached. Try again in ${rateLimit.retryAfterSeconds} seconds.`,
+          error: `Command limit reached. Try again in ${shortRateLimit.retryAfterSeconds} seconds.`,
           limit: deviceCommandLimit,
           windowSeconds: deviceCommandWindowSeconds,
-          retryAfterSeconds: rateLimit.retryAfterSeconds
+          retryAfterSeconds: shortRateLimit.retryAfterSeconds
+        });
+      }
+      const dailyRateLimit = await consumeRateLimit(
+        `commands-daily:${deviceId}`,
+        dailyCommandLimit,
+        86400
+      );
+      if (!dailyRateLimit.allowed) {
+        return json(res, 429, {
+          error: `Daily command limit of ${dailyCommandLimit} reached.`,
+          limit: dailyCommandLimit,
+          windowSeconds: 86400,
+          retryAfterSeconds: dailyRateLimit.retryAfterSeconds
+        });
+      }
+
+      const queueCount = await countQueuedCommands(deviceId);
+      if (queueCount >= maxDeviceQueue) {
+        return json(res, 429, {
+          error: `Device queue is full. Approve or reject pending commands first.`,
+          queueCount,
+          maxQueue: maxDeviceQueue
         });
       }
       const command = {
@@ -550,6 +638,20 @@ export default async function handler(req, res) {
         createdAt: new Date().toISOString(),
         createdMs: Date.now()
       };
+      if (deviceId !== "legacy") {
+        const dedupeKey = createHash("sha256")
+          .update(`${deviceId}:${action}:${stableStringify(args)}`)
+          .digest("hex");
+        const reservedCommandId = await reserveDedupe(
+          dedupeKey,
+          command.id,
+          Math.floor(commandTtlMs / 1000)
+        );
+        if (reservedCommandId !== command.id) {
+          const existing = await getCommand(reservedCommandId);
+          if (existing) return json(res, 200, { ...publicCommand(existing), duplicate: true });
+        }
+      }
       await saveCommand(command, Math.floor(commandTtlMs / 1000));
       return json(res, 202, publicCommand(command));
     }
@@ -565,20 +667,84 @@ export default async function handler(req, res) {
       const deviceId = credentials.id || "legacy";
       if (!(await isPluginAuthorized(req, deviceId))) return json(res, 401, { error: "Unauthorized" });
       cleanupExpired();
-      const command = await claimCommand(deviceId, Math.floor(commandTtlMs / 1000));
-      if (!command) return json(res, 200, { command: null });
-      if (command.status === "queued") {
-        command.status = "claimed";
-        command.claimedAt = new Date().toISOString();
-        await saveCommand(command, Math.floor(commandTtlMs / 1000));
-      }
+      const requestedLimit = Math.max(
+        1,
+        Math.min(pluginBatchLimit, Number.parseInt(url.searchParams.get("limit") ?? "1", 10) || 1)
+      );
+      const commands = await claimCommands(
+        deviceId,
+        requestedLimit,
+        Math.floor(commandTtlMs / 1000)
+      );
+      const queueCount = await countQueuedCommands(deviceId);
+      const shortUsage = await getRateLimitStatus(`commands:${deviceId}`, deviceCommandLimit);
+      const dailyUsage = await getRateLimitStatus(`commands-daily:${deviceId}`, dailyCommandLimit);
       return json(res, 200, {
-        command: {
+        version: bridgeVersion,
+        queueCount,
+        usage: {
+          shortRemaining: shortUsage.remaining,
+          dailyRemaining: dailyUsage.remaining
+        },
+        command: commands[0] ? {
+          id: commands[0].id,
+          action: commands[0].action,
+          args: commands[0].args
+        } : null,
+        commands: commands.map((command) => ({
           id: command.id,
           action: command.action,
           args: command.args
-        }
+        }))
       });
+    }
+
+    if (req.method === "POST" && url.pathname === "/v1/plugin/commands/reject-all") {
+      const credentials = deviceCredentials(req);
+      if (!(await isPluginAuthorized(req, credentials.id))) {
+        return json(res, 401, { error: "Unauthorized" });
+      }
+      const rejected = await rejectQueuedCommands(
+        credentials.id,
+        Math.floor(commandTtlMs / 1000),
+        "Rejected by the user in Roblox Studio."
+      );
+      return json(res, 200, { rejected });
+    }
+
+    if (req.method === "GET" && url.pathname === "/v1/plugin/status") {
+      const credentials = deviceCredentials(req);
+      if (!(await isPluginAuthorized(req, credentials.id))) {
+        return json(res, 401, { error: "Unauthorized" });
+      }
+      const shortUsage = await getRateLimitStatus(`commands:${credentials.id}`, deviceCommandLimit);
+      const dailyUsage = await getRateLimitStatus(
+        `commands-daily:${credentials.id}`,
+        dailyCommandLimit
+      );
+      return json(res, 200, {
+        version: bridgeVersion,
+        queueCount: await countQueuedCommands(credentials.id),
+        usage: {
+          shortRemaining: shortUsage.remaining,
+          dailyRemaining: dailyUsage.remaining
+        },
+        history: await getHistory(credentials.id, 5)
+      });
+    }
+
+    if (req.method === "DELETE" && url.pathname === "/v1/plugin/device") {
+      const credentials = deviceCredentials(req);
+      if (!(await isPluginAuthorized(req, credentials.id))) {
+        return json(res, 401, { error: "Unauthorized" });
+      }
+      await rejectQueuedCommands(
+        credentials.id,
+        Math.floor(commandTtlMs / 1000),
+        "Device connection was reset."
+      );
+      await deleteDevice(credentials.id);
+      return json(res, 200, { revoked: true });
     }
 
     const resultMatch = url.pathname.match(/^\/v1\/plugin\/commands\/([0-9a-f-]+)\/result$/i);
@@ -594,12 +760,19 @@ export default async function handler(req, res) {
       command.error = body.ok ? null : String(body.error ?? "Unknown plugin error");
       command.completedAt = new Date().toISOString();
       await saveCommand(command, Math.floor(commandTtlMs / 1000));
+      await recordHistory(command.deviceId, {
+        id: command.id,
+        action: command.action,
+        ok: body.ok === true,
+        completedAt: command.completedAt,
+        error: body.ok ? null : String(body.error ?? "Unknown error").slice(0, 300)
+      });
       return json(res, 200, publicCommand(command));
     }
 
     return json(res, 404, { error: "Not found" });
   } catch (error) {
-    const status = error instanceof SyntaxError ? 400 : 500;
+    const status = Number(error.status) || (error instanceof SyntaxError ? 400 : 500);
     return json(res, status, { error: error.message });
   }
 }

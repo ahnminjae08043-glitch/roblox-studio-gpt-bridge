@@ -11,6 +11,8 @@ const memoryCommands = new Map();
 const memoryDevices = new Map();
 const memoryPairings = new Map();
 const memoryRateLimits = new Map();
+const memoryDedupe = new Map();
+const memoryHistory = new Map();
 
 async function redis(...command) {
   const response = await fetch(redisUrl, {
@@ -63,6 +65,41 @@ export async function claimCommand(deviceId, ttlSeconds) {
   }
 }
 
+export async function claimCommands(deviceId, limit, ttlSeconds) {
+  const commands = [];
+  for (let index = 0; index < limit; index += 1) {
+    const command = await claimCommand(deviceId, ttlSeconds);
+    if (!command) break;
+    if (!usesRedis && command.status === "queued") {
+      command.status = "claimed";
+      command.claimedAt = new Date().toISOString();
+      memoryCommands.set(command.id, command);
+    }
+    commands.push(command);
+  }
+  return commands;
+}
+
+export async function countQueuedCommands(deviceId) {
+  if (!usesRedis) {
+    return [...memoryCommands.values()].filter(
+      (item) => item.status === "queued" && item.deviceId === deviceId
+    ).length;
+  }
+  return Number(await redis("LLEN", `queue:${deviceId}`));
+}
+
+export async function rejectQueuedCommands(deviceId, ttlSeconds, reason) {
+  const commands = await claimCommands(deviceId, 100, ttlSeconds);
+  for (const command of commands) {
+    command.status = "failed";
+    command.error = reason;
+    command.completedAt = new Date().toISOString();
+    await saveCommand(command, ttlSeconds);
+  }
+  return commands.length;
+}
+
 export async function saveDevice(device, ttlSeconds = 15552000) {
   if (!usesRedis) {
     memoryDevices.set(device.id, device);
@@ -75,6 +112,13 @@ export async function getDevice(id) {
   if (!usesRedis) return memoryDevices.get(id) ?? null;
   const value = await redis("GET", `device:${id}`);
   return value ? JSON.parse(value) : null;
+}
+
+export async function deleteDevice(id) {
+  if (!usesRedis) {
+    return memoryDevices.delete(id);
+  }
+  return Number(await redis("DEL", `device:${id}`)) > 0;
 }
 
 export async function savePairing(code, pairing, ttlSeconds) {
@@ -129,6 +173,62 @@ export async function consumeRateLimit(key, limit, windowSeconds) {
   };
 }
 
+export async function getRateLimitStatus(key, limit) {
+  if (!usesRedis) {
+    const now = Date.now();
+    const entry = memoryRateLimits.get(key);
+    if (!entry || entry.expiresMs <= now) {
+      return { count: 0, remaining: limit, retryAfterSeconds: 0 };
+    }
+    return {
+      count: entry.count,
+      remaining: Math.max(0, limit - entry.count),
+      retryAfterSeconds: Math.max(1, Math.ceil((entry.expiresMs - now) / 1000))
+    };
+  }
+  const result = await redis("MGET", `rate:${key}`);
+  const count = Number(result?.[0] ?? 0);
+  const ttl = count > 0 ? Number(await redis("TTL", `rate:${key}`)) : 0;
+  return {
+    count,
+    remaining: Math.max(0, limit - count),
+    retryAfterSeconds: Math.max(0, ttl)
+  };
+}
+
+export async function reserveDedupe(key, commandId, ttlSeconds) {
+  if (!usesRedis) {
+    const now = Date.now();
+    const current = memoryDedupe.get(key);
+    if (current && current.expiresMs > now) return current.commandId;
+    memoryDedupe.set(key, { commandId, expiresMs: now + ttlSeconds * 1000 });
+    return commandId;
+  }
+  const redisKey = `dedupe:${key}`;
+  const inserted = await redis("SET", redisKey, commandId, "NX", "EX", ttlSeconds);
+  if (inserted === "OK") return commandId;
+  return await redis("GET", redisKey);
+}
+
+export async function recordHistory(deviceId, entry, limit = 10) {
+  if (!usesRedis) {
+    const history = memoryHistory.get(deviceId) ?? [];
+    history.unshift(entry);
+    memoryHistory.set(deviceId, history.slice(0, limit));
+    return;
+  }
+  const key = `history:${deviceId}`;
+  await redis("LPUSH", key, JSON.stringify(entry));
+  await redis("LTRIM", key, "0", String(limit - 1));
+  await redis("EXPIRE", key, "604800");
+}
+
+export async function getHistory(deviceId, limit = 5) {
+  if (!usesRedis) return (memoryHistory.get(deviceId) ?? []).slice(0, limit);
+  const values = await redis("LRANGE", `history:${deviceId}`, "0", String(limit - 1));
+  return values.map((value) => JSON.parse(value));
+}
+
 export function cleanupMemory(now, commandTtlMs) {
   if (usesRedis) return;
   for (const [id, command] of memoryCommands) {
@@ -139,6 +239,9 @@ export function cleanupMemory(now, commandTtlMs) {
   }
   for (const [key, entry] of memoryRateLimits) {
     if (entry.expiresMs <= now) memoryRateLimits.delete(key);
+  }
+  for (const [key, entry] of memoryDedupe) {
+    if (entry.expiresMs <= now) memoryDedupe.delete(key);
   }
 }
 

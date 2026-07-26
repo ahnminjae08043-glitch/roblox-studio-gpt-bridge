@@ -15,7 +15,7 @@ The service does not require a Roblox password and must never request one.
 
 ## Purpose and retention
 
-Data is used only to route commands to the correct paired Studio installation, return results, prevent unauthorized access, and diagnose failures. Pairing codes expire after ten minutes by default. Commands expire according to the configured command TTL. Production operators should delete operational logs within 30 days unless a shorter period is required.
+Data is used only to route commands to the correct paired Studio installation, return results, prevent unauthorized access, and diagnose failures. Pairing codes expire after ten minutes by default. Commands expire according to the configured command TTL. A small recent success/failure history is retained for up to seven days for troubleshooting. Production operators should delete other operational logs within 30 days unless a shorter period is required.
 
 ## Sharing
 
@@ -23,7 +23,7 @@ Data is not sold. Hosting and infrastructure providers may process data solely t
 
 ## Security and user control
 
-Commands are separated by device identifier and authenticated with device-specific tokens. Every Studio mutation requires approval. Users can revoke access by clearing the plugin pairing or uninstalling the plugin.
+Commands are separated by device identifier and authenticated with device-specific tokens. Every Studio mutation requires approval. Users can revoke access with **Reset Device**, by clearing the plugin pairing, or by uninstalling the plugin.
 
 ## Contact
 
